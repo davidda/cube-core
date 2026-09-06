@@ -188,62 +188,6 @@ describe('MssqlQuery', () => {
       const queryAndParams = query.buildSqlAndParams();
 
       const queryString = queryAndParams[0];
-      // The native planner g  it('should group by the created_at field on the calculated granularity for unbounded trailing windows',
-    () => compiler.compile().then(() => {
-      const query = new MssqlQuery(
-        { joinGraph, cubeEvaluator, compiler },
-        {
-          measures: ['visitors.count', 'visitors.unboundedCount'],
-          timeDimensions: [
-            {
-              dimension: 'visitors.createdAt',
-              granularity: 'week',
-              dateRange: ['2017-01-01', '2017-01-30'],
-            },
-          ],
-          timezone: 'America/Los_Angeles',
-          order: [
-            {
-              id: 'visitors.createdAt',
-            },
-          ],
-        }
-      );
-
-      const queryAndParams = query.buildSqlAndParams();
-
-      const queryString = queryAndParams[0];
-      // The native planner groups by the calculated-granularity expression
-      // directly (the legacy planner grouped by a time-series CTE alias).
-      expect(queryString).toContain('GROUP BY dateadd(week, DATEDIFF(week, 0, CAST("visitors".created_at AT TIME ZONE \'UTC\' AT TIME ZONE \'Pacific Standard Time\' AS DATETIME2)), 0)');
-    }));
-
-  it('should group by both time and regular dimensions on rolling windows',
-    () => compiler.compile().then(() => {
-      const query = new MssqlQuery(
-        { joinGraph, cubeEvaluator, compiler },
-        {
-          measures: ['visitors.count', 'visitors.unboundedCount'],
-          dimensions: ['visitors.source'],
-          timeDimensions: [
-            {
-              dimension: 'visitors.createdAt',
-              granularity: 'week',
-              dateRange: ['2017-01-01', '2017-01-30'],
-            },
-          ],
-          timezone: 'America/Los_Angeles',
-          order: [
-            {
-              id: 'visitors.createdAt',
-            },
-          ],
-        }
-      );
-
-      const queryAndParams = query.buildSqlAndParams();
-
-      const queryString = queryAndParams[0];
       // The native planner groups by the regular dimension and the
       // calculated-granularity expression (legacy used a time-series CTE alias).
       expect(queryString).toContain('GROUP BY "visitors".source, dateadd(week, DATEDIFF(week, 0, CAST("visitors".created_at AT TIME ZONE \'UTC\' AT TIME ZONE \'Pacific Standard Time\' AS DATETIME2)), 0)');
