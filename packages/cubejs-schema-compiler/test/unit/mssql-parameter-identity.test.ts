@@ -71,7 +71,7 @@ describe('MSSQL parameter identity', () => {
 
   it.each([[PostgresQuery, 'SELECT $1, $1', ['missing']], [MysqlQuery, 'SELECT ?, ?', ['missing', 'missing']]])(
     'retains shared allocator behavior for %p', async (QueryClass, sql, params) => {
-      const query = await makeQuery(QueryClass as typeof MssqlQuery);
+      const query = await makeQuery(QueryClass as unknown as typeof MssqlQuery);
       expect(query.newParamAllocator(['missing']).buildSqlAndParams('SELECT $0$, $0$', false, query.shouldReuseParams))
         .toEqual([sql, params]);
     }
