@@ -3912,6 +3912,56 @@ async fn test_wrapper_built_in_window_functions() {
     }
 }
 
+#[tokio::test]
+async fn test_wrapper_window_rank_response() {
+    use crate::compile::engine::df::scan::{transform_response, JsonColumnarValueObject};
+    use datafusion::arrow::{
+        array::UInt64Array,
+        datatypes::{DataType, Schema},
+    };
+
+    assert!(Rewriter::sql_push_down_enabled());
+    for function in ["DENSE_RANK", "RANK", "ROW_NUMBER"] {
+        let query_plan = convert_select_to_query_plan(
+            format!(
+                "WITH r AS (SELECT customer_gender FROM KibanaSampleDataEcommerce GROUP BY 1) \
+             SELECT {function}() OVER (ORDER BY customer_gender) AS rank_no FROM r LIMIT 3"
+            ),
+            DatabaseProtocol::PostgreSQL,
+        )
+        .await;
+        let logical_plan = query_plan.as_logical_plan();
+        let scan = logical_plan.find_cube_scan_wrapped_sql();
+        assert!(scan.wrapped_sql.sql.contains(&format!("{function}() OVER")));
+        let schema: Arc<Schema> = Arc::new(scan.wrapped_plan.schema().as_ref().into());
+        assert_eq!(schema.fields().len(), 1);
+        assert_eq!(schema.field(0).data_type(), &DataType::UInt64);
+        let MemberField::Member(member) = &scan.member_fields[0] else {
+            panic!("expected a pushed-down rank column");
+        };
+        // Supply synthetic database results through the actual planned response mapping.
+        for values in [vec![json!(1), json!(2), json!(3)], vec![]] {
+            let count = values.len();
+            let mut response =
+                JsonColumnarValueObject::try_new(vec![member.field_name.clone()], vec![values])
+                    .unwrap();
+            let batch =
+                transform_response(&mut response, schema.clone(), &scan.member_fields).unwrap();
+            assert_eq!(batch.num_rows(), count);
+            assert_eq!(
+                batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<UInt64Array>()
+                    .unwrap()
+                    .values()
+                    .as_ref(),
+                &([1u64, 2, 3][..count])
+            );
+        }
+    }
+}
+
 /// The reported shape: a CTE that sequences rows with `LAG` and `ROW_NUMBER`, a second CTE
 /// deriving values from them, and an aggregation over the result. Without a `ROW_NUMBER`
 /// template the window blocked the push down of everything above it, and the final
