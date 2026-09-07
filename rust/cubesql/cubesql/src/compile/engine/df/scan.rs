@@ -19,6 +19,7 @@ pub use datafusion::{
         array::{
             ArrayRef, BooleanBuilder, Date32Builder, DecimalBuilder, Float32Builder,
             Float64Builder, Int16Builder, Int32Builder, Int64Builder, NullArray, StringBuilder,
+            UInt64Builder,
         },
         datatypes::{DataType, Schema, SchemaRef},
         error::{ArrowError, Result as ArrowResult},
@@ -1011,6 +1012,27 @@ fn load_to_stream_sync(one_shot_stream: &mut CubeScanOneShotStream) -> Result<()
     Ok(())
 }
 
+// UInt64 is advertised as PostgreSQL BIGINT. Keep the Arrow type expected by
+// DataFusion, but reject values that would wrap in the signed wire conversion.
+fn response_uint64(value: u64) -> std::result::Result<u64, CubeError> {
+    if value > i64::MAX as u64 {
+        return Err(CubeError::user(
+            "UInt64 response exceeds PostgreSQL BIGINT range".to_string(),
+        ));
+    }
+    Ok(value)
+}
+
+fn response_uint64_number(value: f64) -> std::result::Result<u64, CubeError> {
+    // Both JSON and streaming JS numbers reach us as f64. Larger integers must
+    // travel as strings: rounding may already have happened before this point.
+    if !value.is_finite() || value < 0.0 || value > 9_007_199_254_740_991.0 || value.fract() != 0.0
+    {
+        return Err(CubeError::user("UInt64 response requires a nonnegative safe integer; transport larger integers as strings".to_string()));
+    }
+    Ok(value as u64)
+}
+
 // Body of `transform_response`: builds one Arrow column per schema field from a
 // `ColumnarValueObject`, fetching each column once via `ColumnarValueObject::column`.
 macro_rules! transform_response_body {
@@ -1108,6 +1130,24 @@ macro_rules! transform_response_body {
                         },
                         {
                             (ScalarValue::Int64(v), builder) => builder.append_option(*v)?,
+                        }
+                    )
+                }
+                DataType::UInt64 => {
+                    build_column!(
+                        DataType::UInt64,
+                        UInt64Builder,
+                        $response,
+                        field_name,
+                        {
+                            (FieldValue::Number(v), builder) => builder.append_value(response_uint64_number(v)?)?,
+                            (FieldValue::String(v), builder) => {
+                                let value = v.parse::<u64>().map_err(|_| CubeError::user("Invalid UInt64 response integer".to_string()))?;
+                                builder.append_value(response_uint64(value)?)?
+                            },
+                        },
+                        {
+                            (ScalarValue::UInt64(v), builder) => builder.append_option(v.map(response_uint64).transpose()?)?,
                         }
                     )
                 }
@@ -1522,6 +1562,178 @@ mod tests {
 
     fn build_schema() -> SchemaRef {
         Arc::new(Schema::new(vec![Field::new("c", DataType::Int64, true)]))
+    }
+
+    fn uint64_response(values: Vec<Value>) -> Result<RecordBatch, CubeError> {
+        let mut response =
+            JsonColumnarValueObject::try_new(vec!["rank_no".to_string()], vec![values])?;
+        transform_response(
+            &mut response,
+            Arc::new(Schema::new(vec![Field::new(
+                "rank_no",
+                DataType::UInt64,
+                true,
+            )])),
+            &vec![MemberField::regular("rank_no".to_string())],
+        )
+    }
+
+    #[test]
+    fn window_rank_response_boundaries() {
+        use datafusion::arrow::array::UInt64Array;
+        use serde_json::json;
+        let batch = uint64_response(vec![
+            Value::Null,
+            json!(0),
+            json!(1),
+            json!(9007199254740991u64),
+            json!("9007199254740993"),
+            json!(i64::MAX.to_string()),
+        ])
+        .unwrap();
+        assert_eq!(batch.schema().field(0).data_type(), &DataType::UInt64);
+        assert_eq!(
+            crate::sql::df_type_to_pg_tid(&DataType::UInt64).unwrap() as u32,
+            20
+        );
+        let values = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+        assert_eq!(
+            values.iter().collect::<Vec<_>>(),
+            vec![
+                None,
+                Some(0),
+                Some(1),
+                Some(9007199254740991),
+                Some(9007199254740993),
+                Some(i64::MAX as u64)
+            ]
+        );
+        assert_eq!(uint64_response(vec![]).unwrap().num_rows(), 0);
+        // Exercise the same signed values and encoders used by PostgreSQL portals.
+        use crate::sql::dataframe::{batches_to_dataframe, TableValue};
+        use pg_srv::ToProtocolValue;
+        let frame = batches_to_dataframe(batch.schema().as_ref(), vec![batch.clone()]).unwrap();
+        for (row, expected) in frame.get_rows().iter().skip(1).zip([
+            0i64,
+            1,
+            9007199254740991,
+            9007199254740993,
+            i64::MAX,
+        ]) {
+            let TableValue::Int64(value) = row.values()[0] else {
+                panic!("expected BIGINT")
+            };
+            assert_eq!(value, expected);
+            let mut binary = bytes::BytesMut::new();
+            value.to_binary(&mut binary).unwrap();
+            assert_eq!(&binary[4..], &expected.to_be_bytes());
+            let mut text = bytes::BytesMut::new();
+            value.to_text(&mut text).unwrap();
+            assert_eq!(&text[4..], expected.to_string().as_bytes());
+        }
+    }
+
+    #[test]
+    fn window_rank_response_rejects_invalid_values() {
+        use serde_json::json;
+        for value in [
+            json!(-1),
+            json!(1.5),
+            json!(9007199254740992u64),
+            json!(9007199254740993u64),
+            json!("-1"),
+            json!("1.5"),
+            json!("invalid"),
+            json!("9223372036854775808"),
+            json!(u64::MAX.to_string()),
+            json!("18446744073709551616"),
+        ] {
+            assert!(
+                uint64_response(vec![value.clone()]).is_err(),
+                "accepted {}",
+                value
+            );
+        }
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(response_uint64_number(value).is_err());
+        }
+    }
+
+    #[test]
+    fn window_rank_response_literals() {
+        for value in [None, Some(1), Some(i64::MAX as u64), Some(u64::MAX)] {
+            let mut response = LiteralRowsValueObject { row_count: 1 };
+            let result = transform_response(
+                &mut response,
+                Arc::new(Schema::new(vec![Field::new(
+                    "rank_no",
+                    DataType::UInt64,
+                    true,
+                )])),
+                &vec![MemberField::Literal(ScalarValue::UInt64(value))],
+            );
+            assert_eq!(result.is_ok(), value != Some(u64::MAX));
+            if value.is_none() {
+                assert!(result.unwrap().column(0).is_null(0));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn window_rank_response_functions() {
+        use datafusion::{arrow::array::UInt64Array, execution::context::SessionContext};
+        for (function, expected) in [
+            ("DENSE_RANK", vec![1u64, 1, 2]),
+            ("RANK", vec![1, 1, 3]),
+            ("ROW_NUMBER", vec![1, 2, 3]),
+        ] {
+            let ctx = SessionContext::new();
+            let batches = ctx.sql(&format!(
+                "SELECT {function}() OVER (ORDER BY code) AS rank_no FROM (VALUES ('a'), ('a'), ('b')) AS t(code) ORDER BY rank_no"
+            )).await.unwrap().collect().await.unwrap();
+            let values = batches
+                .iter()
+                .flat_map(|batch| {
+                    batch
+                        .column(0)
+                        .as_any()
+                        .downcast_ref::<UInt64Array>()
+                        .unwrap()
+                        .values()
+                        .to_vec()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(values, expected);
+            for strings in [false, true] {
+                let result = uint64_response(
+                    values
+                        .iter()
+                        .map(|v| {
+                            if strings {
+                                Value::String(v.to_string())
+                            } else {
+                                Value::from(*v)
+                            }
+                        })
+                        .collect(),
+                )
+                .unwrap();
+                assert_eq!(
+                    result
+                        .column(0)
+                        .as_any()
+                        .downcast_ref::<UInt64Array>()
+                        .unwrap()
+                        .values()
+                        .as_ref(),
+                    expected.as_slice()
+                );
+            }
+        }
     }
 
     #[test]
