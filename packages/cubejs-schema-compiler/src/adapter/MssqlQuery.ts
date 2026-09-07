@@ -146,6 +146,11 @@ export class MssqlQuery extends BaseQuery {
     )`;
   }
 
+  public get shouldReuseParams() {
+    // Indexed placeholders must retain identity in repeated grouped expressions.
+    return true;
+  }
+
   public newParamAllocator(expressionParams) {
     return new MssqlParamAllocator(expressionParams);
   }
