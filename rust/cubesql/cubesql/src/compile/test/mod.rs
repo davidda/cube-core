@@ -41,6 +41,8 @@ pub mod test_cube_scan;
 #[cfg(test)]
 pub mod test_df_execution;
 #[cfg(test)]
+mod test_duplicate_wrapper_aliases;
+#[cfg(test)]
 pub mod test_filters;
 #[cfg(test)]
 pub mod test_introspection;
