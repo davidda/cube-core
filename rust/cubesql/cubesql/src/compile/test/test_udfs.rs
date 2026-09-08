@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 
 use crate::{
     compile::{
-        test::{execute_query, init_testing_logger},
-        DatabaseProtocol,
+        test::{execute_query, init_testing_logger, TestContext},
+        CompilationError, DatabaseProtocol,
     },
     CubeError,
 };
@@ -851,6 +851,99 @@ async fn test_generate_series_postgres() -> Result<(), CubeError> {
     );
 
     Ok(())
+}
+
+#[tokio::test]
+async fn table_function_planning_invalid_expression() {
+    let ctx = TestContext::new(DatabaseProtocol::PostgreSQL).await;
+    for query in [
+        "SELECT DATE '2026-09-01' + 1 AS d",
+        "SELECT COUNT(*) FROM generate_series(DATE '2026-09-01' + 1, DATE '2026-09-08', INTERVAL '1 day')",
+        "SELECT COUNT(*) FROM generate_series(DATE '2026-09-01' + 1, DATE '2026-09-08', INTERVAL '1 day') d",
+        "SELECT * FROM generate_series(DATE '2026-09-01' + 1, DATE '2026-09-08', INTERVAL '1 day') AS d(value)",
+    ] {
+        let err = ctx.convert_sql_to_cube_query(query).await.unwrap_err();
+        assert!(matches!(err, CompilationError::Planning(ref message, _)
+            if message.contains("Date32 + Int64")), "{:?}", err);
+        assert_eq!(
+            ctx.execute_query("SELECT 42 AS answer").await.unwrap(),
+            "+--------+\n| answer |\n+--------+\n| 42     |\n+--------+"
+        );
+    }
+}
+
+#[tokio::test]
+async fn table_function_planning_unsupported_argument() {
+    let ctx = TestContext::new(DatabaseProtocol::PostgreSQL).await;
+    let err = ctx
+        .convert_sql_to_cube_query("SELECT * FROM generate_series(DATE '2026-09-01', DATE '2026-09-08', INTERVAL '1' DAY(2))")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, CompilationError::Planning(ref message, _)
+        if message.contains("leading_precision")),
+        "{:?}",
+        err
+    );
+    assert_eq!(
+        ctx.execute_query("SELECT 42 AS answer").await.unwrap(),
+        "+--------+\n| answer |\n+--------+\n| 42     |\n+--------+"
+    );
+}
+
+#[tokio::test]
+async fn table_function_planning_invalid_signature() {
+    let ctx = TestContext::new(DatabaseProtocol::PostgreSQL).await;
+    let err = ctx
+        .execute_query("SELECT * FROM generate_series(TRUE, FALSE)")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err.cause, crate::CubeErrorCauseType::Planning(_)),
+        "{:?}",
+        err
+    );
+    assert!(
+        err.message.contains("Coercion from [Boolean, Boolean]"),
+        "{:?}",
+        err
+    );
+    assert_eq!(
+        ctx.execute_query("SELECT 42 AS answer").await.unwrap(),
+        "+--------+\n| answer |\n+--------+\n| 42     |\n+--------+"
+    );
+}
+
+#[tokio::test]
+async fn table_function_planning_valid_date_series() {
+    let ctx = TestContext::new(DatabaseProtocol::PostgreSQL).await;
+    // Enumerated calendar dates, independent of generate_series implementation.
+    let dates = "+------------+\n| value      |\n+------------+\n| 2026-09-02 |\n| 2026-09-04 |\n| 2026-09-06 |\n| 2026-09-08 |\n+------------+";
+    let timestamps = "+-------------------------+\n| value                   |\n+-------------------------+\n| 2026-09-02T00:00:00.000 |\n| 2026-09-04T00:00:00.000 |\n| 2026-09-06T00:00:00.000 |\n| 2026-09-08T00:00:00.000 |\n+-------------------------+";
+    for (start, expected) in [
+        ("DATE '2026-09-02'", dates),
+        ("DATE '2026-09-01' + INTERVAL '1 day'", timestamps),
+    ] {
+        assert_eq!(
+            ctx.execute_query(format!(
+                "SELECT value FROM generate_series({start}, DATE '2026-09-08', '2 days'::interval) AS d(value) ORDER BY value"
+            ))
+            .await
+            .unwrap(),
+            expected
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "existing COUNT(*) rewrite loses table function cardinality; separate from planning errors"]
+async fn table_function_planning_count_cardinality() {
+    let ctx = TestContext::new(DatabaseProtocol::PostgreSQL).await;
+    assert_eq!(
+        ctx.execute_query("SELECT COUNT(*) AS n FROM generate_series(DATE '2026-09-01' + INTERVAL '1 day', DATE '2026-09-08', '1 day'::interval) d")
+            .await.unwrap(),
+        "+---+\n| n |\n+---+\n| 7 |\n+---+"
+    );
 }
 
 #[tokio::test]
