@@ -437,7 +437,11 @@ impl ColumnRemapping {
             .map(|f| {
                 MemberField::regular(
                     self.column_remapping
-                        .get(&Column::from_name(f.name().to_string()))
+                        .get(&f.qualified_column())
+                        .or_else(|| {
+                            self.column_remapping
+                                .get(&Column::from_name(f.name().to_string()))
+                        })
                         .map(|x| x.name.to_string())
                         .unwrap_or(f.name().to_string()),
                 )
@@ -502,6 +506,9 @@ impl ColumnRemapping {
 struct Remapper {
     from_alias: Option<String>,
     can_rename_columns: bool,
+    // Only actual input columns may reuse an alias. `remapping` also contains
+    // synthetic references under from_alias for consumers of the output.
+    source_aliases: HashMap<Column, String>,
     remapping: HashMap<Column, Column>,
     used_targets: HashSet<String>,
     used_columns: HashMap<String, ColumnReferenceState>,
@@ -518,6 +525,7 @@ impl Remapper {
             from_alias,
             can_rename_columns,
 
+            source_aliases: HashMap::new(),
             remapping: HashMap::new(),
             used_targets: HashSet::new(),
             used_columns: HashMap::new(),
@@ -570,6 +578,8 @@ impl Remapper {
     }
 
     fn insert_new_alias(&mut self, original_column: &Column, new_alias: &String) {
+        self.source_aliases
+            .insert(original_column.clone(), new_alias.clone());
         let target_column = Column {
             name: new_alias.clone(),
             relation: self.from_alias.clone(),
@@ -611,12 +621,8 @@ impl Remapper {
             // different relation, also keep a mapping under that original relation, so plans
             // that still reference the inner qualifier continue to resolve.
             //
-            // NOTE: this relies on the from-side column being added before a colliding
-            // column from another relation. If the other side is added first, its vacancy
-            // fill maps `{from_alias}.{name}` to its own target, and a later add of the
-            // actual from-side column short-circuits on that entry in `add_column`/`add_expr`,
-            // returning the other side's alias. Callers iterate the from side's columns
-            // before joined sides' ones, preserving this invariant.
+            // Alias reuse consults source_aliases, so a vacancy fill cannot be
+            // mistaken for an actual input when that input is added later.
             let from_alias_column = Column {
                 name: original_column.name.clone(),
                 relation: Some(from_alias.clone()),
@@ -626,18 +632,18 @@ impl Remapper {
                 self.remapping
                     .insert(from_alias_column, target_column.clone());
             }
-            if let Some(original_relation) = &original_column.relation {
-                if original_relation != from_alias {
-                    self.remapping
-                        .insert(original_column.clone(), target_column);
-                }
-            }
+        }
+        // Retain source qualifiers even at the top level, where from_alias can
+        // be absent but the response schema still distinguishes joined members.
+        if original_column.relation.is_some() {
+            self.remapping
+                .insert(original_column.clone(), target_column);
         }
     }
 
     pub fn add_column(&mut self, column: &Column) -> result::Result<String, CubeError> {
-        if let Some(alias_column) = self.remapping.get(column) {
-            return Ok(alias_column.name.clone());
+        if let Some(alias) = self.source_aliases.get(column) {
+            return Ok(alias.clone());
         }
 
         let new_alias = self.new_alias(&column.name, None)?;
@@ -663,8 +669,8 @@ impl Remapper {
         } else {
             Column::from_name(&original_alias)
         };
-        if let Some(alias_column) = self.remapping.get(&original_alias_key) {
-            return Ok(alias_column.name.clone());
+        if let Some(alias) = self.source_aliases.get(&original_alias_key) {
+            return Ok(alias.clone());
         }
 
         let start_from = expr_name(&expr, &schema)?;
@@ -4960,6 +4966,69 @@ mod tests {
         }
     }
 
+    #[test]
+    fn duplicate_wrapper_aliases_source_order() {
+        for reverse in [false, true] {
+            for use_expr in [false, true] {
+                let mut remapper = Remapper::new(Some("orders".to_string()), true);
+                let mut sources = vec![
+                    Column::from_qualified_name("buyers.name"),
+                    Column::from_qualified_name("orders.name"),
+                ];
+                if reverse {
+                    sources.reverse();
+                }
+                let schema = DFSchema::empty();
+                let mut aliases = vec![];
+                for source in &sources {
+                    let alias = if use_expr {
+                        let expr = Expr::Column(source.clone());
+                        remapper.add_expr(&schema, &expr, &expr).unwrap()
+                    } else {
+                        remapper.add_column(source).unwrap()
+                    };
+                    aliases.push(alias);
+                }
+                assert_ne!(aliases[0], aliases[1]);
+                for (source, alias) in sources.iter().zip(&aliases) {
+                    assert_eq!(&remapper.add_column(source).unwrap(), alias);
+                }
+                let mapping = remapper.into_remapping().unwrap();
+                for (source, alias) in sources.iter().zip(&aliases) {
+                    assert_eq!(
+                        mapping.remap(&Expr::Column(source.clone())).unwrap(),
+                        Expr::Column(Column::from_qualified_name(&format!("orders.{alias}")))
+                    );
+                }
+                assert!(!mapping
+                    .column_remapping
+                    .contains_key(&Column::from_name("name")));
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_wrapper_aliases_response_fields() {
+        let schema = DFSchema::new_with_metadata(
+            vec![
+                DFField::new(Some("buyers"), "name", DataType::Utf8, true),
+                DFField::new(Some("orders"), "name", DataType::Utf8, true),
+            ],
+            HashMap::new(),
+        )
+        .unwrap();
+        let mut remapper = Remapper::new(None, true);
+        for field in schema.fields() {
+            remapper.add_column(&field.qualified_column()).unwrap();
+        }
+        let fields = remapper.into_remapping().unwrap().member_fields(&schema);
+        for (field, expected) in fields.iter().zip(["name", "name_1"]) {
+            let MemberField::Member(member) = field else {
+                panic!("expected response member")
+            };
+            assert_eq!(member.field_name, expected);
+        }
+    }
     use crate::{
         compile::engine::df::scan::CubeScanOptions,
         sql::HttpAuthContext,
