@@ -3,10 +3,14 @@ use std::sync::Arc;
 use crate::config::ConfigObj;
 use async_trait::async_trait;
 use datafusion::{
+    arrow::record_batch::{RecordBatch, RecordBatchOptions},
     error::Result,
     execution::context::{QueryPlanner, SessionState},
     logical_plan::LogicalPlan,
-    physical_plan::{planner::DefaultPhysicalPlanner, ExecutionPlan, PhysicalPlanner},
+    physical_plan::{
+        empty::EmptyExec, memory::MemoryExec, planner::DefaultPhysicalPlanner,
+        subquery::SubqueryExec, ExecutionPlan, PhysicalPlanner,
+    },
 };
 
 use crate::transport::{LoadRequestMeta, TransportService};
@@ -50,8 +54,47 @@ impl QueryPlanner for CubeQueryPlanner {
             },
         )]);
         // Delegate most work of physical planning to the default physical planner
-        physical_planner
+        let plan = physical_planner
             .create_physical_plan(logical_plan, session_state)
-            .await
+            .await?;
+        align_subquery_input(plan)
+    }
+}
+
+// The pinned DataFusion EmptyExec emits a placeholder column even when its schema
+// is empty. SubqueryExec copies those batch columns before appending scalar results,
+// so its batch no longer matches its schema. Supply the declared zero-column row
+// at this boundary; the outer projection still selects and names the real results.
+fn align_subquery_input(plan: Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
+    let original = plan.children();
+    let mut children = original
+        .iter()
+        .cloned()
+        .map(align_subquery_input)
+        .collect::<Result<Vec<_>>>()?;
+    if plan.as_any().is::<SubqueryExec>() {
+        if let Some(input) = children.first_mut() {
+            if let Some(empty) = input.as_any().downcast_ref::<EmptyExec>() {
+                if empty.produce_one_row() && input.schema().fields().is_empty() {
+                    let schema = input.schema();
+                    let mut options = RecordBatchOptions::default();
+                    options.row_count = Some(1);
+                    let batch =
+                        RecordBatch::try_new_with_options(schema.clone(), vec![], &options)?;
+                    let partitions =
+                        vec![vec![batch]; input.output_partitioning().partition_count()];
+                    *input = Arc::new(MemoryExec::try_new(&partitions, schema, None)?);
+                }
+            }
+        }
+    }
+    if children
+        .iter()
+        .zip(&original)
+        .any(|(a, b)| !Arc::ptr_eq(a, b))
+    {
+        plan.with_new_children(children)
+    } else {
+        Ok(plan)
     }
 }
