@@ -2680,6 +2680,34 @@ from
       expect(res.rows).toMatchSnapshot();
     });
 
+    executePg('SQL API: scalar aggregate subqueries without FROM', async (connection) => {
+      const res = await connection.query(`
+        SELECT
+          (SELECT COUNT(*) FROM "ECommerce" WHERE "category" = 'Furniture') AS "furniture_rows",
+          (SELECT COUNT(DISTINCT "productName") FROM "ECommerce" WHERE "category" = 'Office Supplies') AS "office_products"
+      `);
+
+      expect(res.rows).toEqual([{ furniture_rows: '15', office_products: '8' }]);
+      expect(res.fields.map(({ name, dataTypeID }) => ({ name, dataTypeID }))).toEqual([
+        { name: 'furniture_rows', dataTypeID: 20 },
+        { name: 'office_products', dataTypeID: 20 },
+      ]);
+    });
+
+    executePg('SQL API: empty scalar aggregate subqueries without FROM', async (connection) => {
+      const res = await connection.query(`
+        SELECT
+          (SELECT COUNT(*) FROM "ECommerce" WHERE "category" = 'Missing category') AS "missing_rows",
+          (SELECT COUNT(DISTINCT "productName") FROM "ECommerce" WHERE "category" = 'Missing category') AS "missing_products"
+      `);
+
+      expect(res.rows).toEqual([{ missing_rows: '0', missing_products: '0' }]);
+      expect(res.fields.map(({ name, dataTypeID }) => ({ name, dataTypeID }))).toEqual([
+        { name: 'missing_rows', dataTypeID: 20 },
+        { name: 'missing_products', dataTypeID: 20 },
+      ]);
+    });
+
     executePg('SQL API: reuse params', async (connection) => {
       const res = await connection.query(`
     select
