@@ -30,6 +30,111 @@ use crate::{
 };
 
 #[tokio::test]
+async fn test_wrapper_mssql_window_sort_alias() {
+    if !Rewriter::sql_push_down_enabled() {
+        return;
+    }
+    // Stock MSSQL and the separate CASE-based NULL ordering correction both
+    // require same-SELECT rank aliases to remain standalone ORDER BY keys.
+    for sort in [
+        "{{ expr }} IS NULL {% if nulls_first %}DESC{% else %}ASC{% endif %}, {{ expr }} {% if asc %}ASC{% else %}DESC{% endif %}",
+        "CASE WHEN {{ expr }} IS NULL THEN 1 ELSE 0 END {% if nulls_first %}DESC{% else %}ASC{% endif %}, {{ expr }} {% if asc %}ASC{% else %}DESC{% endif %}",
+    ] {
+        let context = TestContext::with_custom_templates(
+            DatabaseProtocol::PostgreSQL,
+            vec![("expressions/sort".to_string(), sort.to_string())],
+        ).await;
+        for function in ["DENSE_RANK", "RANK", "ROW_NUMBER"] {
+            for direction in ["ASC", "DESC"] {
+                for nulls in ["FIRST", "LAST"] {
+                    let plan = context.convert_sql_to_cube_query(&format!(
+                        "WITH totals AS (SELECT customer_gender, SUM(avgPrice) AS total_amount \
+                         FROM KibanaSampleDataEcommerce GROUP BY 1) \
+                         SELECT customer_gender AS entity, total_amount, \
+                         {function}() OVER (ORDER BY total_amount DESC) AS rank_no \
+                         FROM totals ORDER BY rank_no {direction} NULLS {nulls}, \
+                         entity ASC NULLS FIRST LIMIT 3 OFFSET 1"
+                    )).await.unwrap().as_logical_plan();
+                    let sql = plan.find_cube_scan_wrapped_sql().wrapped_sql.sql;
+                    println!("{function} {direction} NULLS {nulls}: {sql}");
+                    let alias = Regex::new(&format!(r#"(?s){}\(\) OVER \(.*?\) "([^"]+)""#, function))
+                        .unwrap().captures(&sql).expect("window is pushed down")[1].to_string();
+                    assert!(!sql.contains(&format!("\"{alias}\" IS NULL")), "{}", sql);
+                    assert!(sql.contains(&format!("\"{alias}\" {direction}")), "{}", sql);
+                    assert!(sql.contains("IS NULL"), "nullable tie-breaker retains NULL ordering: {}", sql);
+                    let names = plan.schema().fields().iter().map(|f| f.name().as_str()).collect::<Vec<_>>();
+                    assert_eq!(names, vec!["entity", "total_amount", "rank_no"]);
+                    assert_eq!(plan.schema().fields()[2].data_type(), &datafusion::arrow::datatypes::DataType::UInt64);
+                    assert!(sql.contains("LIMIT 3") && sql.contains("OFFSET 1"), "{}", sql);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_wrapper_mssql_window_sort_alias_identity() {
+    if !Rewriter::sql_push_down_enabled() {
+        return;
+    }
+    let context = TestContext::with_custom_templates(
+        DatabaseProtocol::PostgreSQL,
+        vec![("expressions/sort".to_string(),
+            "CASE WHEN {{ expr }} IS NULL THEN 1 ELSE 0 END {% if nulls_first %}DESC{% else %}ASC{% endif %}, {{ expr }} {% if asc %}ASC{% else %}DESC{% endif %}".to_string())],
+    ).await;
+    let plan = context.convert_sql_to_cube_query(
+        "WITH totals AS (SELECT customer_gender, SUM(avgPrice) AS total_amount \
+         FROM KibanaSampleDataEcommerce GROUP BY 1) \
+         SELECT customer_gender, DENSE_RANK() OVER (ORDER BY total_amount DESC) AS first_rank, \
+         DENSE_RANK() OVER (ORDER BY total_amount ASC) AS second_rank \
+         FROM totals ORDER BY first_rank ASC NULLS LAST, second_rank DESC NULLS FIRST, customer_gender"
+    ).await.unwrap().as_logical_plan();
+    let sql = plan.find_cube_scan_wrapped_sql().wrapped_sql.sql;
+    let aliases = Regex::new(r#"(?s)DENSE_RANK\(\) OVER \(.*?\) "([^"]+)""#)
+        .unwrap()
+        .captures_iter(&sql)
+        .map(|c| c[1].to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(aliases.len(), 2, "{}", sql);
+    assert_ne!(aliases[0], aliases[1]);
+    for (public_alias, direction) in [("first_rank", "ASC"), ("second_rank", "DESC")] {
+        let alias = Regex::new(&format!(r#""totals"\."([^"]+)" "{public_alias}""#))
+            .unwrap()
+            .captures(&sql)
+            .unwrap()[1]
+            .to_string();
+        assert!(aliases.contains(&alias));
+        assert!(sql.contains(&format!("\"{alias}\" {direction}")), "{}", sql);
+        assert!(!sql.contains(&format!("\"{alias}\" IS NULL")), "{}", sql);
+    }
+    // A rank-like public name does not prove nonnullability. Nullable window
+    // functions must retain the dialect's NULL-ordering behavior.
+    for expression in [
+        "LAG(total_amount) OVER (ORDER BY customer_gender)",
+        "total_amount",
+    ] {
+        let plan = context
+            .convert_sql_to_cube_query(&format!(
+                "WITH totals AS (SELECT customer_gender, SUM(avgPrice) AS total_amount \
+             FROM KibanaSampleDataEcommerce GROUP BY 1) \
+             SELECT customer_gender, {expression} AS dense_rank_order \
+             FROM totals ORDER BY dense_rank_order NULLS LAST"
+            ))
+            .await
+            .unwrap()
+            .as_logical_plan();
+        let sql = plan.find_cube_scan_wrapped_sql().wrapped_sql.sql;
+        assert!(
+            Regex::new(r#"ORDER BY CASE WHEN [^\n]+ IS NULL THEN 1 ELSE 0 END ASC"#)
+                .unwrap()
+                .is_match(&sql),
+            "{}",
+            sql
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_simple_wrapper() {
     if !Rewriter::sql_push_down_enabled() {
         return;

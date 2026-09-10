@@ -26,7 +26,9 @@ use cubeclient::models::{V1LoadRequestQuery, V1LoadRequestQueryJoinSubquery};
 use datafusion::logical_plan::{ExprVisitable, ExpressionVisitor, Recursion};
 use datafusion::{
     error::{DataFusionError, Result},
-    logical_expr::{ReturnTypeFunction, ScalarFunctionImplementation},
+    logical_expr::{
+        window_function::BuiltInWindowFunction, ReturnTypeFunction, ScalarFunctionImplementation,
+    },
     logical_plan::{
         plan::Extension, replace_col, Column, DFSchema, DFSchemaRef, Expr, ExprRewritable,
         ExprRewriter, ExprSchemable, GroupingSet, JoinType, LogicalPlan, Operator,
@@ -36,6 +38,7 @@ use datafusion::{
         aggregates::AggregateFunction,
         functions::{BuiltinScalarFunction, Signature, Volatility},
         udf::ScalarUDF,
+        windows::WindowFunction,
     },
     scalar::ScalarValue,
 };
@@ -2063,7 +2066,7 @@ impl WrappedSelectNode {
                 .collect::<Result<Vec<_>>>()?
         };
 
-        let (order, sql) = Self::generate_column_expr(
+        let (mut order, sql) = Self::generate_column_expr(
             schema.clone(),
             Self::rewrite_int_divisions(order_expr, &input_schema),
             sql,
@@ -2075,6 +2078,45 @@ impl WrappedSelectNode {
             subqueries_sql,
         )
         .await?;
+
+        // A SELECT alias is legal as a standalone ORDER BY key, but not inside
+        // MSSQL's emulated NULL discriminator. These ranks are never NULL, even
+        // when their inputs are. Only bypass the dialect sort expression for a
+        // direct reference to a rank computed in this SELECT; expressions over
+        // ranks and columns from other SELECTs do not carry that guarantee.
+        for (original, (column, _)) in self.order_expr.iter().zip(order.iter_mut()) {
+            if let Expr::Sort { expr, asc, .. } = original {
+                if let Expr::Column(sort_column) = expr.as_ref() {
+                    for (window_expr, (window_column, _)) in self.window_expr.iter().zip(&window) {
+                        let mut unaliased_window = window_expr;
+                        while let Expr::Alias(inner, _) = unaliased_window {
+                            unaliased_window = inner;
+                        }
+                        if matches!(
+                            unaliased_window,
+                            Expr::WindowFunction {
+                                fun: WindowFunction::BuiltInWindowFunction(
+                                    BuiltInWindowFunction::DenseRank
+                                        | BuiltInWindowFunction::Rank
+                                        | BuiltInWindowFunction::RowNumber
+                                ),
+                                ..
+                            }
+                        ) && *sort_column == Column::from_name(expr_name(window_expr, schema)?)
+                        {
+                            column.expr = format!(
+                                "{} {}",
+                                generator
+                                    .get_sql_templates()
+                                    .quote_identifier(&window_column.alias)?,
+                                if *asc { "ASC" } else { "DESC" }
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         Ok((
             generator,
