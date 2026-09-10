@@ -43,11 +43,11 @@ pub mod test_df_execution;
 #[cfg(test)]
 mod test_duplicate_wrapper_aliases;
 #[cfg(test)]
-pub mod test_scalar_subquery;
-#[cfg(test)]
 pub mod test_filters;
 #[cfg(test)]
 pub mod test_introspection;
+#[cfg(test)]
+pub mod test_scalar_subquery;
 #[cfg(test)]
 mod test_trim;
 #[cfg(test)]
