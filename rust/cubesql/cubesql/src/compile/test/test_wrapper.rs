@@ -30,6 +30,97 @@ use crate::{
 };
 
 #[tokio::test]
+async fn test_wrapper_ungrouped_window_sort_member_resolution() {
+    if !Rewriter::sql_push_down_enabled() {
+        return;
+    }
+    init_testing_logger();
+    let mut cube = super::get_test_meta().remove(0);
+    cube.name = "difference_items".to_string();
+    cube.dimensions = ["id", "left_amount", "right_amount"]
+        .iter()
+        .map(|name| crate::transport::CubeMetaDimension {
+            name: format!("difference_items.{name}"),
+            r#type: "number".to_string(),
+            ..Default::default()
+        })
+        .collect();
+    cube.measures.clear();
+    cube.segments.clear();
+    for function in ["DENSE_RANK", "RANK", "ROW_NUMBER"] {
+        for projection in ["*", "id, left_amount, right_amount, difference"] {
+            for order in ["difference_rank, id", "id", ""] {
+                let order = if order.is_empty() {
+                    String::new()
+                } else {
+                    format!("ORDER BY {order}")
+                };
+                let query = format!(
+                    "WITH differences AS (
+                        SELECT id, left_amount, right_amount,
+                               right_amount - left_amount AS difference
+                        FROM difference_items
+                    )
+                    SELECT {projection}, {function}() OVER (
+                        ORDER BY ABS(difference) DESC
+                    ) AS difference_rank
+                    FROM differences {order} LIMIT 4 OFFSET 1"
+                );
+                let plan =
+                    super::convert_select_to_query_plan_with_meta(query, vec![cube.clone()]).await;
+                let logical = plan.as_logical_plan();
+                let sql = logical.find_cube_scan_wrapped_sql().wrapped_sql.sql;
+                assert!(sql.contains(&format!("{function}() OVER")), "{}", sql);
+                assert!(sql.contains("ABS("), "{}", sql);
+                // The mock transport embeds the generated Cube request in its SQL.
+                let request =
+                    serde_json::Deserializer::from_str(sql.split("SELECT * FROM ").nth(1).unwrap())
+                        .into_iter::<serde_json::Value>()
+                        .next()
+                        .unwrap()
+                        .unwrap();
+                let request = &request["query"];
+                assert_eq!(request["ungrouped"], true);
+                assert_eq!(request["limit"], 4);
+                assert_eq!(request["offset"], 1);
+                let window: serde_json::Value =
+                    serde_json::from_str(request["measures"][0].as_str().unwrap()).unwrap();
+                let expected_order = if order.contains("difference_rank") {
+                    json!([[window["alias"], "asc"], ["id", "asc"]])
+                } else if order.is_empty() {
+                    json!([])
+                } else {
+                    json!([["id", "asc"]])
+                };
+                assert_eq!(request["order"], expected_order);
+                assert_eq!(window["expr"]["sql"], format!(
+                    "{function}() OVER (ORDER BY ABS((${{difference_items.right_amount}} - ${{difference_items.left_amount}})) DESC NULLS FIRST )"
+                ));
+                assert_eq!(
+                    logical.schema().fields()[4].data_type(),
+                    &datafusion::arrow::datatypes::DataType::UInt64
+                );
+                assert_eq!(
+                    logical
+                        .schema()
+                        .fields()
+                        .iter()
+                        .map(|f| f.name().as_str())
+                        .collect::<Vec<_>>(),
+                    vec![
+                        "id",
+                        "left_amount",
+                        "right_amount",
+                        "difference",
+                        "difference_rank"
+                    ]
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn test_simple_wrapper() {
     if !Rewriter::sql_push_down_enabled() {
         return;

@@ -2670,6 +2670,43 @@ from
       expect(res.rows).toMatchSnapshot('ungrouped_pre_agg');
     });
 
+    executePg('SQL API: sort by ungrouped window alias over derived dimension', async (connection) => {
+      const explained = await connection.query(`
+        EXPLAIN
+        WITH differences AS (
+          SELECT
+            rowId AS id,
+            sales AS left_amount,
+            profit AS right_amount,
+            profit - sales AS difference
+          FROM ECommerce
+        )
+        SELECT
+          id,
+          left_amount,
+          right_amount,
+          difference,
+          DENSE_RANK() OVER (ORDER BY ABS(difference) DESC) AS difference_rank
+        FROM differences
+        ORDER BY difference_rank, id
+        LIMIT 10
+      `);
+      expect(explained.rows).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          plan_type: 'logical_plan',
+          plan: 'CubeScanWrappedSql',
+        }),
+        expect.objectContaining({
+          plan_type: 'physical_plan',
+          plan: expect.stringContaining('CubeScanExecutionPlan, SQL:'),
+        }),
+      ]));
+      const physicalPlan = explained.rows.find(({ plan_type: planType }) => planType === 'physical_plan')?.plan;
+      expect(physicalPlan).toMatch(/DENSE_RANK\(\) OVER/i);
+      expect(physicalPlan).toMatch(/ABS\(/i);
+      expect(physicalPlan?.match(/ORDER BY/gi)).toHaveLength(2);
+    });
+
     executePg('SQL API: post-aggregate percentage of total', async (connection) => {
       const res = await connection.query(`
     select
