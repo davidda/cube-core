@@ -2670,6 +2670,21 @@ from
       expect(res.rows).toMatchSnapshot('ungrouped_pre_agg');
     });
 
+    executePg('SQL API: table function count cardinality', async (connection) => {
+      const cases = [[1, 3, ['1', '2', '3']], [2, 2, ['2']], [3, 1, []]] as const;
+      for (const [start, end, values] of cases) {
+        const rows = await connection.query(`SELECT value FROM generate_series(${start}, ${end}) AS d(value) ORDER BY value`);
+        expect(rows.rows).toEqual(values.map(value => ({ value })));
+        for (const count of ['*', '1', 'value']) {
+          const result = await connection.query(`SELECT COUNT(${count}) AS n FROM generate_series(${start}, ${end}) AS d(value)`);
+          expect(result.rows).toEqual([{ n: String(values.length) }]);
+          expect(result.fields[0].dataTypeID).toBe(20);
+        }
+      }
+      const control = await connection.query('SELECT COUNT(*) AS n FROM (VALUES (1), (2), (3)) AS d(value)');
+      expect(control.rows).toEqual([{ n: '3' }]);
+    });
+
     executePg('SQL API: post-aggregate percentage of total', async (connection) => {
       const res = await connection.query(`
     select
