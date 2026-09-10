@@ -2499,6 +2499,87 @@ macro_rules! generate_series_helper_timestamp {
     };
 }
 
+fn generate_series_interval_step(step: &ArrayRef, index: usize) -> Result<IntervalMonthDayNano> {
+    match step.data_type() {
+        DataType::Interval(IntervalUnit::MonthDayNano) => {
+            Ok(downcast_primitive_arg!(step, "step", IntervalMonthDayNanoType).value(index))
+        }
+        DataType::Interval(IntervalUnit::DayTime) => {
+            let value = downcast_primitive_arg!(step, "step", IntervalDayTimeType).value(index);
+            let (days, millis) = IntervalDayTimeType::to_parts(value);
+            // Every i32 millisecond value fits in i64 nanoseconds. Keep days separate.
+            Ok(IntervalMonthDayNanoType::make_value(
+                0,
+                days,
+                i64::from(millis) * 1_000_000,
+            ))
+        }
+        DataType::Interval(IntervalUnit::YearMonth) => {
+            let months = downcast_primitive_arg!(step, "step", IntervalYearMonthType).value(index);
+            Ok(IntervalMonthDayNanoType::make_value(months, 0, 0))
+        }
+        _ => Err(DataFusionError::Execution(format!(
+            "Unsupported generate_series interval step type: {}",
+            step.data_type()
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod generate_series_interval_tests {
+    use super::*;
+
+    #[test]
+    fn generate_series_interval_conversion_boundaries() -> Result<()> {
+        for (days, millis) in [(i32::MAX, i32::MAX), (i32::MIN, i32::MIN), (1, -1)] {
+            let step: ArrayRef = Arc::new(PrimitiveArray::<IntervalDayTimeType>::from(vec![
+                IntervalDayTimeType::make_value(days, millis),
+            ]));
+            assert_eq!(
+                IntervalMonthDayNanoType::to_parts(generate_series_interval_step(&step, 0)?),
+                (0, days, i64::from(millis) * 1_000_000)
+            );
+        }
+        for months in [i32::MIN, i32::MAX] {
+            let step: ArrayRef =
+                Arc::new(PrimitiveArray::<IntervalYearMonthType>::from(vec![months]));
+            assert_eq!(
+                IntervalMonthDayNanoType::to_parts(generate_series_interval_step(&step, 0)?),
+                (months, 0, 0)
+            );
+        }
+        let value = IntervalMonthDayNanoType::make_value(1, 2, 3);
+        let step: ArrayRef = Arc::new(IntervalMonthDayNanoArray::from(vec![value]));
+        assert_eq!(generate_series_interval_step(&step, 0)?, value);
+        Ok(())
+    }
+
+    #[test]
+    fn generate_series_interval_large_milliseconds() -> Result<()> {
+        // Widen milliseconds before multiplying: this exceeds i32 nanoseconds.
+        let end = 2_147_483_647_000_000_i64;
+        let args = [
+            ColumnarValue::Scalar(ScalarValue::TimestampNanosecond(Some(0), None)),
+            ColumnarValue::Scalar(ScalarValue::TimestampNanosecond(Some(end), None)),
+            ColumnarValue::Scalar(ScalarValue::IntervalDayTime(Some(
+                IntervalDayTimeType::make_value(0, i32::MAX),
+            ))),
+        ];
+        let (values, sections) = (create_generate_series_udtf().fun)(&args, 1)?;
+        assert_eq!(
+            values.data_type(),
+            &DataType::Timestamp(TimeUnit::Nanosecond, None)
+        );
+        let values = values
+            .as_any()
+            .downcast_ref::<TimestampNanosecondArray>()
+            .unwrap();
+        assert_eq!(values.values(), &[0, end]);
+        assert_eq!(sections, vec![2]);
+        Ok(())
+    }
+}
+
 macro_rules! generate_series_non_primitive_udtf {
     ($ARGS:expr, $TYPE: ident, $PRIMITIVE_TYPE: ident, $HANDLE_MACRO:ident) => {{
         let mut section_sizes: Vec<usize> = Vec::new();
@@ -2507,22 +2588,14 @@ macro_rules! generate_series_non_primitive_udtf {
         if l_arr.is_some() {
             let l_arr = l_arr.unwrap();
             let r_arr = downcast_primitive_arg!($ARGS[1], "right", $TYPE);
-            let step_arr = IntervalMonthDayNanoArray::from_value(
-                IntervalMonthDayNanoType::make_value(0, 1, 0), // 1 day as default
-                1,
-            );
-            let step_arr = if $ARGS.len() > 2 {
-                downcast_primitive_arg!($ARGS[2], "step", IntervalMonthDayNanoType)
-            } else {
-                &step_arr
-            };
-
             let mut builder = PrimitiveBuilder::<$TYPE>::new(1);
             for (i, (start, end)) in l_arr.iter().zip(r_arr.iter()).enumerate() {
-                let step = if step_arr.len() > i {
-                    step_arr.value(i)
+                let step = if $ARGS.len() > 2 {
+                    let step_arr = &$ARGS[2];
+                    let index = if step_arr.len() > i { i } else { 0 };
+                    generate_series_interval_step(step_arr, index)?
                 } else {
-                    step_arr.value(0)
+                    IntervalMonthDayNanoType::make_value(0, 1, 0) // 1 day as default
                 };
 
                 if let (Some(start), Some(end)) = (start, end) {

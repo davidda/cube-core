@@ -1,12 +1,35 @@
+use datafusion::arrow::datatypes::{DataType, TimeUnit};
 use pretty_assertions::assert_eq;
 
 use crate::{
     compile::{
-        test::{execute_query, init_testing_logger},
-        DatabaseProtocol,
+        test::{execute_query, init_testing_logger, TestContext},
+        DatabaseProtocol, QueryPlan,
     },
     CubeError,
 };
+
+async fn assert_query_type_and_result(
+    query: &str,
+    expected_type: DataType,
+    expected_result: &str,
+) -> Result<(), CubeError> {
+    let context = TestContext::new(DatabaseProtocol::PostgreSQL).await;
+    let query_plan = context
+        .convert_sql_to_cube_query(query)
+        .await
+        .map_err(CubeError::from)?;
+
+    match query_plan {
+        QueryPlan::DataFusionSelect(plan, _) => {
+            assert_eq!(plan.schema().field(0).data_type(), &expected_type);
+        }
+        _ => panic!("expected a DataFusion SELECT plan"),
+    }
+
+    assert_eq!(context.execute_query(query).await?, expected_result);
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_instr() -> Result<(), CubeError> {
@@ -849,6 +872,164 @@ async fn test_generate_series_postgres() -> Result<(), CubeError> {
         )
         .await?
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_generate_series_interval_day_steps_postgres() -> Result<(), CubeError> {
+    let expected_dates = "+------------+\n\
+        | value      |\n\
+        +------------+\n\
+        | 2026-09-02 |\n\
+        | 2026-09-03 |\n\
+        | 2026-09-04 |\n\
+        +------------+";
+
+    for query in [
+        "SELECT value FROM generate_series(DATE '2026-09-02', DATE '2026-09-04', INTERVAL '1 day') AS d(value) ORDER BY value",
+        "SELECT value FROM generate_series(DATE '2026-09-02', DATE '2026-09-04', '1 day'::interval) AS d(value) ORDER BY value",
+    ] {
+        assert_query_type_and_result(query, DataType::Date32, expected_dates).await?;
+    }
+
+    let expected_timestamps = "+-------------------------+\n\
+        | value                   |\n\
+        +-------------------------+\n\
+        | 2026-09-02T00:00:00.125 |\n\
+        | 2026-09-03T00:00:00.125 |\n\
+        | 2026-09-04T00:00:00.125 |\n\
+        +-------------------------+";
+
+    for query in [
+        "SELECT value FROM generate_series(TIMESTAMP '2026-09-02 00:00:00.125', TIMESTAMP '2026-09-04 00:00:00.125', INTERVAL '1 day') AS d(value) ORDER BY value",
+        "SELECT value FROM generate_series(TIMESTAMP '2026-09-02 00:00:00.125', TIMESTAMP '2026-09-04 00:00:00.125', '1 day'::interval) AS d(value) ORDER BY value",
+    ] {
+        assert_query_type_and_result(
+            query,
+            DataType::Timestamp(TimeUnit::Nanosecond, None),
+            expected_timestamps,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_generate_series_interval_millisecond_steps_postgres() -> Result<(), CubeError> {
+    let expected = "+-------------------------+\n\
+        | value                   |\n\
+        +-------------------------+\n\
+        | 2026-09-02T00:00:00.125 |\n\
+        | 2026-09-02T00:00:00.375 |\n\
+        | 2026-09-02T00:00:00.625 |\n\
+        +-------------------------+";
+
+    for query in [
+        "SELECT value FROM generate_series(TIMESTAMP '2026-09-02 00:00:00.125', TIMESTAMP '2026-09-02 00:00:00.625', INTERVAL '250 milliseconds') AS d(value) ORDER BY value",
+        "SELECT value FROM generate_series(TIMESTAMP '2026-09-02 00:00:00.125', TIMESTAMP '2026-09-02 00:00:00.625', '250 milliseconds'::interval) AS d(value) ORDER BY value",
+    ] {
+        assert_query_type_and_result(
+            query,
+            DataType::Timestamp(TimeUnit::Nanosecond, None),
+            expected,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_generate_series_interval_defaults_and_empty_postgres() -> Result<(), CubeError> {
+    assert_query_type_and_result(
+        "SELECT value FROM generate_series(DATE '2026-09-02', DATE '2026-09-04') AS d(value) ORDER BY value",
+        DataType::Date32,
+        "+------------+\n\
+        | value      |\n\
+        +------------+\n\
+        | 2026-09-02 |\n\
+        | 2026-09-03 |\n\
+        | 2026-09-04 |\n\
+        +------------+",
+    )
+    .await?;
+
+    assert_query_type_and_result(
+        "SELECT value FROM generate_series(TIMESTAMP '2026-09-02 00:00:00.125', TIMESTAMP '2026-09-04 00:00:00.125') AS d(value) ORDER BY value",
+        DataType::Timestamp(TimeUnit::Nanosecond, None),
+        "+-------------------------+\n\
+        | value                   |\n\
+        +-------------------------+\n\
+        | 2026-09-02T00:00:00.125 |\n\
+        | 2026-09-03T00:00:00.125 |\n\
+        | 2026-09-04T00:00:00.125 |\n\
+        +-------------------------+",
+    )
+    .await?;
+
+    assert_query_type_and_result(
+        "SELECT value FROM generate_series(TIMESTAMP '2026-09-04 00:00:00.125', TIMESTAMP '2026-09-02 00:00:00.125', INTERVAL '1 day') AS d(value) ORDER BY value",
+        DataType::Timestamp(TimeUnit::Nanosecond, None),
+        "+-------+\n\
+        | value |\n\
+        +-------+\n\
+        +-------+",
+    )
+    .await?;
+
+    assert_query_type_and_result(
+        "SELECT value FROM generate_series(DATE '2026-09-04', DATE '2026-09-02', INTERVAL '1 day') AS d(value) ORDER BY value",
+        DataType::Date32,
+        "+-------+\n\
+        | value |\n\
+        +-------+\n\
+        +-------+",
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_generate_series_calendar_month_steps_postgres() -> Result<(), CubeError> {
+    let expected_dates = "+------------+\n\
+        | value      |\n\
+        +------------+\n\
+        | 2024-01-31 |\n\
+        | 2024-02-29 |\n\
+        | 2024-03-29 |\n\
+        | 2024-04-29 |\n\
+        +------------+";
+
+    for query in [
+        "SELECT value FROM generate_series(DATE '2024-01-31', DATE '2024-04-30', INTERVAL '1 month') AS d(value) ORDER BY value",
+        "SELECT value FROM generate_series(DATE '2024-01-31', DATE '2024-04-30', '1 month'::interval) AS d(value) ORDER BY value",
+    ] {
+        assert_query_type_and_result(query, DataType::Date32, expected_dates).await?;
+    }
+
+    let expected_timestamps = "+-------------------------+\n\
+        | value                   |\n\
+        +-------------------------+\n\
+        | 2024-01-31T12:34:56.789 |\n\
+        | 2024-02-29T12:34:56.789 |\n\
+        | 2024-03-29T12:34:56.789 |\n\
+        | 2024-04-29T12:34:56.789 |\n\
+        +-------------------------+";
+
+    for query in [
+        "SELECT value FROM generate_series(TIMESTAMP '2024-01-31 12:34:56.789', TIMESTAMP '2024-04-30 12:34:56.789', INTERVAL '1 month') AS d(value) ORDER BY value",
+        "SELECT value FROM generate_series(TIMESTAMP '2024-01-31 12:34:56.789', TIMESTAMP '2024-04-30 12:34:56.789', '1 month'::interval) AS d(value) ORDER BY value",
+    ] {
+        assert_query_type_and_result(
+            query,
+            DataType::Timestamp(TimeUnit::Nanosecond, None),
+            expected_timestamps,
+        )
+        .await?;
+    }
 
     Ok(())
 }
