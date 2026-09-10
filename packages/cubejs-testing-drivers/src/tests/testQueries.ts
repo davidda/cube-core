@@ -2620,6 +2620,25 @@ export function testQueries(type: string, { includeIncrementalSchemaSuite, exten
       });
     }
 
+    executePg('SQL API: table function planning errors preserve the session', async (connection) => {
+      await expect(connection.query(`
+        SELECT * FROM generate_series(
+          DATE '2026-09-01' + 1, DATE '2026-09-08', INTERVAL '1 day'
+        ) d
+      `)).rejects.toThrow(/Planning Error:.*Date32 \+ Int64/);
+
+      await expect(connection.query(`
+        SELECT * FROM generate_series(
+          DATE '2026-09-01', DATE '2026-09-08', INTERVAL '1' DAY(2)
+        ) d
+      `)).rejects.toThrow(/Planning Error:.*leading_precision/);
+
+      const result = await connection.query(`
+        SELECT value FROM generate_series(1, 3) AS d(value) ORDER BY value
+      `);
+      expect(result.rows).toEqual([{ value: '1' }, { value: '2' }, { value: '3' }]);
+    });
+
     executePg('SQL API: powerbi min max push down', async (connection) => {
       const res = await connection.query(`
       select
