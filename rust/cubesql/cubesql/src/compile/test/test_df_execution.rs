@@ -6,6 +6,60 @@ use crate::compile::{
 };
 
 #[tokio::test]
+async fn test_timestamp_coalesce_typing() {
+    use crate::compile::{test::TestContext, QueryPlan};
+    use datafusion::{
+        arrow::datatypes::{DataType, TimeUnit},
+        dataframe::DataFrame,
+        scalar::ScalarValue,
+    };
+
+    let ctx = TestContext::new(DatabaseProtocol::PostgreSQL).await;
+    let fixture = "(SELECT id, CAST(start_date AS TIMESTAMP) AS start_date, CAST(end_date AS TIMESTAMP) AS end_date FROM (VALUES (1, '2026-10-01', '2026-10-02'), (2, '2026-10-01', NULL), (3, '2026-12-01', NULL)) AS v(id, start_date, end_date)) AS t";
+    for fallback in [
+        "DATE '2026-11-01'",
+        "TIMESTAMP '2026-11-01 00:00:00'",
+        "CAST('2026-11-01' AS TIMESTAMP)",
+    ] {
+        let sql = format!("SELECT id, end_date, {fallback} AS fallback, COALESCE(end_date, {fallback}) AS result FROM {fixture} WHERE start_date < COALESCE(end_date, {fallback}) ORDER BY id");
+        let QueryPlan::DataFusionSelect(plan, context) =
+            ctx.convert_sql_to_cube_query(&sql).await.unwrap()
+        else {
+            panic!("expected an executable DataFusion plan");
+        };
+        let df = DataFrame::new(context.state, &plan);
+        let timestamp = DataType::Timestamp(TimeUnit::Nanosecond, None);
+        assert_eq!(df.schema().field(1).data_type(), &timestamp);
+        assert_eq!(df.schema().field(3).data_type(), &timestamp);
+        let batches = df.collect().await.unwrap();
+        let rows: Vec<_> = batches
+            .iter()
+            .flat_map(|batch| {
+                (0..batch.num_rows()).map(move |row| {
+                    (
+                        ScalarValue::try_from_array(batch.column(0), row).unwrap(),
+                        ScalarValue::try_from_array(batch.column(3), row).unwrap(),
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    ScalarValue::Int64(Some(1)),
+                    ScalarValue::TimestampNanosecond(Some(1790899200000000000), None)
+                ),
+                (
+                    ScalarValue::Int64(Some(2)),
+                    ScalarValue::TimestampNanosecond(Some(1793491200000000000), None)
+                ),
+            ]
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_join_with_coercion() {
     init_testing_logger();
 

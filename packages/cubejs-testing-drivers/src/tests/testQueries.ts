@@ -2945,6 +2945,25 @@ from
       expect(res.rows).toMatchSnapshot();
     });
 
+    executePg('SQL API: Timestamp COALESCE comparison', async (connection) => {
+      const expected = await connection.query(`
+        SELECT BigECommerce.id
+        FROM BigECommerce
+        WHERE BigECommerce.orderDate < BigECommerce.completedDate
+        ORDER BY 1 LIMIT 3
+      `);
+      expect(expected.rows).toHaveLength(3);
+      for (const fallback of ["DATE '2021-01-01'", "TIMESTAMP '2021-01-01 00:00:00'"]) {
+        const actual = await connection.query(`
+          SELECT BigECommerce.id
+          FROM BigECommerce
+          WHERE BigECommerce.orderDate < COALESCE(BigECommerce.completedDate, ${fallback})
+          ORDER BY 1 LIMIT 3
+        `);
+        expect(actual.rows).toEqual(expected.rows);
+      }
+    });
+
     executePg('SQL API: Date/time comparison with date_trunc with SQL push down', async (connection) => {
       const res = await connection.query(`
         SELECT MEASURE(BigECommerce.rollingCountBy2Week)
