@@ -2078,7 +2078,12 @@ impl WrappedSelectNode {
         // Sort expressions can reference window expressions computed in this same select
         // by their full DataFusion name. Those columns don't exist in the source SQL, so
         // rewrite them to the generated window aliases, which ORDER BY can reference by name.
-        let order_expr = if window.is_empty() {
+        let order_expr = if push_to_cube_context.is_some() {
+            // Push-to-Cube binds sort keys to the generated select-list members below.
+            // It does not consume SQL sort expressions. Rendering them here would
+            // incorrectly resolve derived output columns against the input scan.
+            vec![]
+        } else if window.is_empty() {
             self.order_expr.clone()
         } else {
             let window_columns = self
@@ -4108,7 +4113,9 @@ impl WrappedSelectNode {
                 .chain(self.aggr_expr.iter())
                 .chain(self.filter_expr.iter())
                 .chain(self.window_expr.iter())
-                .chain(self.order_expr.iter())
+                // Push-to-Cube ORDER BY keys must match selected expressions. Their
+                // dependencies are already collected above; output references such
+                // as a window's DataFusion name are not input Cube members.
                 .chain(self.joins.iter().map(|(_plan, cond, _join_type)| cond));
             for expr in every_expression {
                 collect_used_members_to_set(

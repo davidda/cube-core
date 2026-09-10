@@ -694,6 +694,7 @@ pub fn sql_generator(
                     ("functions/STRING_AGG".to_string(), "STRING_AGG({% if distinct %}DISTINCT {% endif %}{{ args_concat }})".to_string()),
                     ("functions/DATETRUNC".to_string(), "DATE_TRUNC({{ args_concat }})".to_string()),
                     ("functions/DATEPART".to_string(), "DATE_PART({{ args_concat }})".to_string()),
+                    ("functions/ABS".to_string(), "ABS({{ args_concat }})".to_string()),
                     ("functions/FLOOR".to_string(), "FLOOR({{ args_concat }})".to_string()),
                     ("functions/CEIL".to_string(), "CEIL({{ args_concat }})".to_string()),
                     ("functions/TRUNC".to_string(), "TRUNC({{ args_concat }})".to_string()),
