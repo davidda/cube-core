@@ -1639,3 +1639,42 @@ async fn test_string_agg_group_by() -> Result<(), CubeError> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn table_function_count_cardinality() -> Result<(), CubeError> {
+    for (start, end, expected) in [(1, 3, 3), (2, 2, 1), (3, 1, 0)] {
+        for count in ["*", "1", "value"] {
+            let sql = format!(
+                "SELECT COUNT({count}) AS n FROM generate_series({start}, {end}) AS d(value)"
+            );
+            assert_eq!(
+                execute_query(sql.clone(), DatabaseProtocol::PostgreSQL).await?,
+                format!("+---+\n| n |\n+---+\n| {expected} |\n+---+"),
+                "{sql}"
+            );
+        }
+        let sql =
+            format!("SELECT value FROM generate_series({start}, {end}) AS d(value) ORDER BY value");
+        let expected_rows = match expected {
+            3 => "+-------+\n| value |\n+-------+\n| 1     |\n| 2     |\n| 3     |\n+-------+",
+            1 => "+-------+\n| value |\n+-------+\n| 2     |\n+-------+",
+            _ => "+-------+\n| value |\n+-------+\n+-------+",
+        };
+        assert_eq!(
+            execute_query(sql.clone(), DatabaseProtocol::PostgreSQL).await?,
+            expected_rows,
+            "{sql}"
+        );
+    }
+    for count in ["*", "1", "value"] {
+        assert_eq!(
+            execute_query(
+                format!("SELECT COUNT({count}) AS n FROM (VALUES (1), (2), (3)) AS d(value)"),
+                DatabaseProtocol::PostgreSQL
+            )
+            .await?,
+            "+---+\n| n |\n+---+\n| 3 |\n+---+"
+        );
+    }
+    Ok(())
+}
