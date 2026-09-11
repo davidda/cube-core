@@ -126,7 +126,11 @@ async fn check_roles(grouped: bool) {
     use datafusion::{arrow::array::StringArray, execution::context::SessionContext};
     let meta = role_meta();
     let session = get_test_session(DatabaseProtocol::PostgreSQL, meta.clone()).await;
-    for join in ["LEFT", "INNER"] {
+    for join in if grouped {
+        vec!["LEFT", "INNER", "RIGHT", "FULL"]
+    } else {
+        vec!["LEFT", "INNER"]
+    } {
         for (first, second, expected_first) in [
             ("i.name", "c.name", ["Inspector A", "Inspector Z"]),
             ("w.name", "c.name", ["Stored Z", "Stored A"]),

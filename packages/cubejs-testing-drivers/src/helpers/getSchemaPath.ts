@@ -76,11 +76,11 @@ export function getSchemaPath(type: string, suf?: string): [path: string, file: 
     ['RebindingBuyers', 'Buyer'],
   ].map(([name, value]) => ({
     name,
-    sql: `select * from ${roleTable}`,
+    sql: `select customer_id, '${value}' as role_name from ${roleTable}`,
     dimensions: [
       { name: 'id', sql: 'customer_id', type: 'string', primary_key: true, shown: true },
       ...['name', 'abcdefghijklmnop_left', 'abcdefghijklmnop_right'].map((member) => ({
-        name: member, sql: `'${value}'`, type: 'string',
+        name: member, sql: 'role_name', type: 'string',
       })),
     ],
     ...(name === 'RebindingOrders' ? {
