@@ -2631,7 +2631,7 @@ export function testQueries(type: string, { includeIncrementalSchemaSuite, exten
       `);
       const keys = await connection.query('SELECT id FROM RebindingOrders GROUP BY id ORDER BY id');
       expect(keys.rows.length).toBeGreaterThan(0);
-      expect(result.rows).toEqual(keys.rows.map(({ id }) => ({ id, inspector_name: 'Inspector' })));
+      expect(result.rows).toEqual(keys.rows.map(({ id }) => ({ id, inspector_name: `Inspector-${id}` })));
       await expect(connection.query('SELECT i.missing FROM RebindingInspectors i')).rejects.toThrow(/missing/i);
     });
     for (const grouped of [false, true]) {
@@ -2652,13 +2652,13 @@ export function testQueries(type: string, { includeIncrementalSchemaSuite, exten
               ), keys AS (SELECT id FROM RebindingOrders GROUP BY id)
               SELECT r.id, r.inspector_name, r.buyer_name FROM roles r
               ${join} JOIN keys k ON r.id = k.id
-              WHERE r.inspector_name = '${expected}' AND r.buyer_name = 'Buyer'
+              WHERE r.inspector_name LIKE '${expected}-%' AND r.buyer_name LIKE 'Buyer-%'
               ORDER BY r.inspector_name, r.buyer_name, r.id
             `);
             const keys = await connection.query('SELECT id FROM RebindingOrders GROUP BY id ORDER BY id');
             expect(keys.rows.length).toBeGreaterThan(0);
             expect(result.fields.map((field) => field.name)).toEqual(['id', 'inspector_name', 'buyer_name']);
-            expect(result.rows).toEqual(keys.rows.map(({ id }) => ({ id, inspector_name: expected, buyer_name: 'Buyer' })));
+            expect(result.rows).toEqual(keys.rows.map(({ id }) => ({ id, inspector_name: `${expected}-${id}`, buyer_name: `Buyer-${id}` })));
           }
         });
       }
