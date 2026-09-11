@@ -68,6 +68,27 @@ export function getSchemaPath(type: string, suf?: string): [path: string, file: 
     }
   );
 
+  // Reuse the portable customer keys, but give each semantic role a distinct value.
+  const roleTable = suf ? `${tables.customers}_${suf}` : tables.customers;
+  _content.cubes.push(...[
+    ['RebindingOrders', 'Stored'],
+    ['RebindingInspectors', 'Inspector'],
+    ['RebindingBuyers', 'Buyer'],
+  ].map(([name, value]) => ({
+    name,
+    sql: `select * from ${roleTable}`,
+    dimensions: [
+      { name: 'id', sql: 'customer_id', type: 'string', primary_key: true, shown: true },
+      ...['name', 'abcdefghijklmnop_left', 'abcdefghijklmnop_right'].map((member) => ({
+        name: member, sql: `'${value}'`, type: 'string',
+      })),
+    ],
+    ...(name === 'RebindingOrders' ? {
+      joins: ['RebindingInspectors', 'RebindingBuyers'].map((role) => ({
+        name: role, relationship: 'belongs_to', sql: `{CUBE}.customer_id = {${role}}.customer_id`,
+      })),
+    } : {}),
+  })));
   fs.writeFileSync(
     path.resolve(_path, _file),
     YAML.stringify(_content, { version: '1.1' }),

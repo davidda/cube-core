@@ -1494,3 +1494,6 @@ where
         .join()
         .unwrap();
 }
+
+#[cfg(test)]
+mod test_member_rebinding;

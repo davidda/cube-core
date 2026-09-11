@@ -2620,6 +2620,49 @@ export function testQueries(type: string, { includeIncrementalSchemaSuite, exten
       });
     }
 
+    executePg('SQL API: member rebinding single role control', async (connection) => {
+      const result = await connection.query(`
+        WITH roles AS (
+          SELECT w.id, i.name AS inspector_name FROM RebindingOrders w
+          LEFT JOIN RebindingInspectors i ON w.__cubeJoinField = i.__cubeJoinField
+          GROUP BY w.id, i.name
+        ), keys AS (SELECT id FROM RebindingOrders GROUP BY id)
+        SELECT r.id, r.inspector_name FROM roles r LEFT JOIN keys k ON r.id = k.id ORDER BY r.id
+      `);
+      const keys = await connection.query('SELECT id FROM RebindingOrders GROUP BY id ORDER BY id');
+      expect(keys.rows.length).toBeGreaterThan(0);
+      expect(result.rows).toEqual(keys.rows.map(({ id }) => ({ id, inspector_name: 'Inspector' })));
+      await expect(connection.query('SELECT i.missing FROM RebindingInspectors i')).rejects.toThrow(/missing/i);
+    });
+    for (const grouped of [false, true]) {
+      for (const join of ['LEFT', 'INNER']) {
+        executePg(`SQL API: member rebinding ${grouped ? 'grouped' : 'ungrouped'} ${join}`, async (connection) => {
+          for (const [first, second, expected] of [
+            ['i.name', 'c.name', 'Inspector'],
+            ['w.name', 'c.name', 'Stored'],
+            ['i.abcdefghijklmnop_left', 'c.abcdefghijklmnop_right', 'Inspector'],
+          ]) {
+            const result = await connection.query(`
+              WITH roles AS (
+                SELECT w.id, ${first} AS inspector_name, ${second} AS buyer_name
+                FROM RebindingOrders w
+                LEFT JOIN RebindingInspectors i ON w.__cubeJoinField = i.__cubeJoinField
+                LEFT JOIN RebindingBuyers c ON w.__cubeJoinField = c.__cubeJoinField
+                ${grouped ? `GROUP BY w.id, ${first}, ${second}` : ''}
+              ), keys AS (SELECT id FROM RebindingOrders GROUP BY id)
+              SELECT r.id, r.inspector_name, r.buyer_name FROM roles r
+              ${join} JOIN keys k ON r.id = k.id
+              WHERE r.inspector_name = '${expected}' AND r.buyer_name = 'Buyer'
+              ORDER BY r.inspector_name, r.buyer_name, r.id
+            `);
+            const keys = await connection.query('SELECT id FROM RebindingOrders GROUP BY id ORDER BY id');
+            expect(keys.rows.length).toBeGreaterThan(0);
+            expect(result.fields.map((field) => field.name)).toEqual(['id', 'inspector_name', 'buyer_name']);
+            expect(result.rows).toEqual(keys.rows.map(({ id }) => ({ id, inspector_name: expected, buyer_name: 'Buyer' })));
+          }
+        });
+      }
+    }
     executePg('SQL API: powerbi min max push down', async (connection) => {
       const res = await connection.query(`
       select
