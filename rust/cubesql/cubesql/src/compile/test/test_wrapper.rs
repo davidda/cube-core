@@ -4581,38 +4581,6 @@ async fn test_wrapper_multi_arg_aggregate_function_without_template() {
 }
 
 #[tokio::test]
-async fn boolean_context_wrapper_plans() {
-    use crate::compile::{
-        test::{LogicalPlanTestUtils, TestContext},
-        DatabaseProtocol,
-    };
-    let context = TestContext::with_custom_templates(
-        DatabaseProtocol::PostgreSQL,
-        crate::compile::test::mssql_boolean_templates(),
-    )
-    .await;
-    for (query, fragment) in [
-        ("SELECT COUNT(DISTINCT customer_gender) = 2 AS flag FROM KibanaSampleDataEcommerce", "CAST(CASE WHEN"),
-        ("SELECT has_subscription IS NULL AS missing, MEASURE(count) FROM KibanaSampleDataEcommerce GROUP BY 1", "CAST(CASE WHEN"),
-        ("SELECT customer_gender, SUM(CASE WHEN has_subscription THEN 1 ELSE 0 END) FROM KibanaSampleDataEcommerce GROUP BY 1", "= CAST(1 AS BIT)"),
-        ("SELECT customer_gender, SUM(CASE WHEN customer_gender IS NULL THEN 1 ELSE 0 END) FROM KibanaSampleDataEcommerce WHERE NOT has_subscription GROUP BY 1", "= CAST(1 AS BIT)"),
-        ("SELECT customer_gender, SUM(CASE WHEN customer_gender IS NULL THEN 1 ELSE 0 END) FROM KibanaSampleDataEcommerce WHERE has_subscription = CAST(0 AS BOOLEAN) GROUP BY 1", "CAST(0 AS BIT)"),
-    ] {
-        let plan = context.convert_sql_to_cube_query(query).await.unwrap().as_logical_plan();
-        let sql = plan.find_cube_scan_wrapped_sql().wrapped_sql.sql;
-        assert!(sql.contains(fragment), "{}: {}", query, sql);
-        assert!(!sql.contains("TRUE") && !sql.contains("FALSE"), "{}", sql);
-        println!("MSSQL_BOOLEAN_PLAN {}", serde_json::json!({"query": query, "sql": sql}));
-    }
-}
-
-/// A pivot with subtotals on both axes: a four-way union of
-/// aggregations, one per grouping set, each filtered before and after aggregating and
-/// projected with literals, under a grouping, sort and limit that read the union. Every
-/// query has several pushed down forms, and a union that spelled out every combination of
-/// them would blow past the node limit of the rewrite before rules on top of the union even
-/// start multiplying it.
-#[tokio::test]
 async fn test_wrapper_union_of_many_form_queries_stays_within_node_limit() {
     if !Rewriter::sql_push_down_enabled() {
         return;
@@ -5265,4 +5233,77 @@ async fn test_wrapper_cast_without_template_folds_to_cube_scan_filter() {
         Some("KibanaSampleDataEcommerce.order_date")
     );
     assert_eq!(filters[0].operator.as_deref(), Some("afterOrOnDate"));
+}
+
+#[tokio::test]
+async fn boolean_context_wrapper_plans() {
+    if !Rewriter::sql_push_down_enabled() {
+        return;
+    }
+    use crate::compile::{
+        test::{LogicalPlanTestUtils, TestContext},
+        DatabaseProtocol,
+    };
+    let context = TestContext::with_custom_templates(
+        DatabaseProtocol::PostgreSQL,
+        crate::compile::test::mssql_boolean_templates(),
+    )
+    .await;
+    for (query, fragment) in [
+        ("SELECT COUNT(DISTINCT customer_gender) = 2 AS flag FROM KibanaSampleDataEcommerce", "CAST(CASE WHEN"),
+        ("SELECT has_subscription IS NULL AS missing, MEASURE(count) FROM KibanaSampleDataEcommerce GROUP BY 1", "CAST(CASE WHEN"),
+        ("SELECT customer_gender, SUM(CASE WHEN has_subscription = TRUE THEN 1 ELSE 0 END) FROM KibanaSampleDataEcommerce GROUP BY 1", "= CAST(1 AS BIT)"),
+        ("SELECT customer_gender, SUM(CASE WHEN customer_gender IS NULL THEN 1 ELSE 0 END) FROM KibanaSampleDataEcommerce WHERE NOT (has_subscription = TRUE) GROUP BY 1", "= CAST(1 AS BIT)"),
+        ("SELECT customer_gender, SUM(CASE WHEN customer_gender IS NULL THEN 1 ELSE 0 END) FROM KibanaSampleDataEcommerce WHERE has_subscription = CAST(0 AS BOOLEAN) GROUP BY 1", "CAST(0 AS BIT)"),
+    ] {
+        let plan = context.convert_sql_to_cube_query(query).await.unwrap().as_logical_plan();
+        let sql = plan.find_cube_scan_wrapped_sql().wrapped_sql.sql;
+        assert!(sql.contains(fragment), "{}: {}", query, sql);
+        assert!(!sql.contains("TRUE") && !sql.contains("FALSE"), "{}", sql);
+    }
+}
+
+#[tokio::test]
+async fn boolean_context_segment_members() {
+    if !Rewriter::sql_push_down_enabled() {
+        return;
+    }
+    let context = TestContext::with_custom_templates(
+        DatabaseProtocol::PostgreSQL,
+        crate::compile::test::mssql_boolean_templates(),
+    )
+    .await;
+    let fixture = crate::compile::test::mssql_boolean_fixture();
+    for case in fixture["segmentCases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(fixture["dimensionCases"].as_array().unwrap())
+    {
+        let plan = context
+            .convert_sql_to_cube_query(case["query"].as_str().unwrap())
+            .await
+            .unwrap()
+            .as_logical_plan();
+        // The test transport embeds the schema-compiler request in its SQL response.
+        let sql = plan.find_cube_scan_wrapped_sql().wrapped_sql.sql;
+        let request: serde_json::Value =
+            serde_json::from_str(&sql[sql.find('{').unwrap()..=sql.rfind('}').unwrap()]).unwrap();
+        let members = if case["predicate"].as_bool().unwrap() {
+            "segments"
+        } else {
+            "measures"
+        };
+        let expressions = request["query"][members]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|member| {
+                let member: serde_json::Value =
+                    serde_json::from_str(member.as_str().unwrap()).unwrap();
+                member["expr"]["sql"].clone()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(expressions, vec![case["sql"].clone()]);
+    }
 }

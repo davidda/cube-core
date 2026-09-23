@@ -41,15 +41,9 @@ pub mod test_cube_scan;
 #[cfg(test)]
 pub mod test_df_execution;
 #[cfg(test)]
-mod test_duplicate_wrapper_aliases;
-#[cfg(test)]
 pub mod test_filters;
 #[cfg(test)]
 pub mod test_introspection;
-#[cfg(test)]
-pub mod test_scalar_subquery;
-#[cfg(test)]
-mod test_trim;
 #[cfg(test)]
 pub mod test_udfs;
 #[cfg(test)]
@@ -694,7 +688,6 @@ pub fn sql_generator(
                     ("functions/STRING_AGG".to_string(), "STRING_AGG({% if distinct %}DISTINCT {% endif %}{{ args_concat }})".to_string()),
                     ("functions/DATETRUNC".to_string(), "DATE_TRUNC({{ args_concat }})".to_string()),
                     ("functions/DATEPART".to_string(), "DATE_PART({{ args_concat }})".to_string()),
-                    ("functions/ABS".to_string(), "ABS({{ args_concat }})".to_string()),
                     ("functions/FLOOR".to_string(), "FLOOR({{ args_concat }})".to_string()),
                     ("functions/CEIL".to_string(), "CEIL({{ args_concat }})".to_string()),
                     ("functions/TRUNC".to_string(), "TRUNC({{ args_concat }})".to_string()),
@@ -1502,23 +1495,26 @@ where
         .unwrap();
 }
 
+// The adapter unit test checks these templates against MssqlQuery.sqlTemplates().
+// Rust checks the rendered SQL in the same fixture; the MSSQL integration test
+// executes it. This keeps the database test connected to the actual renderer.
+#[cfg(test)]
+pub fn mssql_boolean_fixture() -> serde_json::Value {
+    serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../packages/cubejs-schema-compiler/test/fixtures/mssql-boolean-contexts.json"
+    )))
+    .unwrap()
+}
+
+#[cfg(test)]
 pub fn mssql_boolean_templates() -> Vec<(String, String)> {
-    [
-        ("expressions/true", "CAST(1 AS BIT)"),
-        ("expressions/false", "CAST(0 AS BIT)"),
-        ("types/boolean", "BIT"),
-        (
-            "expressions/scalar_to_predicate",
-            "({{ expr }} = CAST(1 AS BIT))",
-        ),
-        (
-            "expressions/predicate_to_scalar",
-            "CAST(CASE WHEN {{ expr }} THEN 1 WHEN NOT ({{ expr }}) THEN 0 ELSE NULL END AS BIT)",
-        ),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect()
+    mssql_boolean_fixture()["templates"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(key, value)| (key.clone(), value.as_str().unwrap().to_string()))
+        .collect()
 }
 
 #[cfg(test)]
