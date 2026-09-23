@@ -1520,3 +1520,6 @@ pub fn mssql_boolean_templates() -> Vec<(String, String)> {
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect()
 }
+
+#[cfg(test)]
+mod test_member_rebinding;

@@ -950,7 +950,7 @@ dependencies = [
 [[package]]
 name = "cube-ext"
 version = "1.0.0"
-source = "git+https://github.com/davidda/arrow-datafusion.git?rev=7f3c7994f1901b108a66a0991c53d7adde0f66cd#7f3c7994f1901b108a66a0991c53d7adde0f66cd"
+source = "git+https://github.com/davidda/arrow-datafusion.git?rev=c54a1af1368c32689d3b4a5c91709fefab481c17#c54a1af1368c32689d3b4a5c91709fefab481c17"
 dependencies = [
  "arrow 13.0.0",
  "chrono",
@@ -1126,7 +1126,7 @@ checksum = "e8566979429cf69b49a5c740c60791108e86440e8be149bbea4fe54d2c32d6e2"
 [[package]]
 name = "datafusion"
 version = "7.0.0"
-source = "git+https://github.com/davidda/arrow-datafusion.git?rev=7f3c7994f1901b108a66a0991c53d7adde0f66cd#7f3c7994f1901b108a66a0991c53d7adde0f66cd"
+source = "git+https://github.com/davidda/arrow-datafusion.git?rev=c54a1af1368c32689d3b4a5c91709fefab481c17#c54a1af1368c32689d3b4a5c91709fefab481c17"
 dependencies = [
  "ahash 0.7.8",
  "arrow 13.0.0",
@@ -1159,7 +1159,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "7.0.0"
-source = "git+https://github.com/davidda/arrow-datafusion.git?rev=7f3c7994f1901b108a66a0991c53d7adde0f66cd#7f3c7994f1901b108a66a0991c53d7adde0f66cd"
+source = "git+https://github.com/davidda/arrow-datafusion.git?rev=c54a1af1368c32689d3b4a5c91709fefab481c17#c54a1af1368c32689d3b4a5c91709fefab481c17"
 dependencies = [
  "arrow 13.0.0",
  "ordered-float 2.10.1",
@@ -1170,7 +1170,7 @@ dependencies = [
 [[package]]
 name = "datafusion-data-access"
 version = "1.0.0"
-source = "git+https://github.com/davidda/arrow-datafusion.git?rev=7f3c7994f1901b108a66a0991c53d7adde0f66cd#7f3c7994f1901b108a66a0991c53d7adde0f66cd"
+source = "git+https://github.com/davidda/arrow-datafusion.git?rev=c54a1af1368c32689d3b4a5c91709fefab481c17#c54a1af1368c32689d3b4a5c91709fefab481c17"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1183,7 +1183,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "7.0.0"
-source = "git+https://github.com/davidda/arrow-datafusion.git?rev=7f3c7994f1901b108a66a0991c53d7adde0f66cd#7f3c7994f1901b108a66a0991c53d7adde0f66cd"
+source = "git+https://github.com/davidda/arrow-datafusion.git?rev=c54a1af1368c32689d3b4a5c91709fefab481c17#c54a1af1368c32689d3b4a5c91709fefab481c17"
 dependencies = [
  "ahash 0.7.8",
  "arrow 13.0.0",
@@ -1194,7 +1194,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "7.0.0"
-source = "git+https://github.com/davidda/arrow-datafusion.git?rev=7f3c7994f1901b108a66a0991c53d7adde0f66cd#7f3c7994f1901b108a66a0991c53d7adde0f66cd"
+source = "git+https://github.com/davidda/arrow-datafusion.git?rev=c54a1af1368c32689d3b4a5c91709fefab481c17#c54a1af1368c32689d3b4a5c91709fefab481c17"
 dependencies = [
  "ahash 0.7.8",
  "arrow 13.0.0",
