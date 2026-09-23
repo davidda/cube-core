@@ -3384,8 +3384,6 @@ impl WrappedSelectNode {
                 sql_query,
             ),
             ScalarValue::Float64(f) => (
-                // Display formats integral floats without a decimal point. Keep the
-                // scalar type so the source does not infer integer arithmetic.
                 sql_generator
                     .get_sql_templates()
                     .float_literal_expr(f, DataType::Float64)
@@ -5059,6 +5057,7 @@ mod tests {
         ]);
         for (literal, expected) in [
             (ScalarValue::Float32(Some(100.0)), "CAST(100 AS FLOAT(24))"),
+            (ScalarValue::Float32(Some(0.1)), "CAST(0.1 AS FLOAT(24))"),
             (ScalarValue::Float64(Some(100.0)), "CAST(100 AS FLOAT(53))"),
             (
                 ScalarValue::Float64(Some(100.1)),
@@ -5072,6 +5071,25 @@ mod tests {
             (ScalarValue::Float32(None), "CAST(NULL AS FLOAT(24))"),
             (ScalarValue::Float64(None), "CAST(NULL AS FLOAT(53))"),
             (ScalarValue::Int64(Some(100)), "100"),
+        ] {
+            let (sql, _) = WrappedSelectNode::generate_sql_for_literal(
+                SqlQuery::new(String::new(), vec![]),
+                generator.clone(),
+                literal,
+            )
+            .unwrap();
+            assert_eq!(sql, expected);
+        }
+
+        let generator = crate::compile::test::sql_generator(vec![(
+            "types/nullable".into(),
+            "Nullable({{ data_type }})".into(),
+        )]);
+        for (literal, expected) in [
+            (ScalarValue::Float32(None), "CAST(NULL AS Nullable(FLOAT))"),
+            (ScalarValue::Float64(None), "CAST(NULL AS Nullable(DOUBLE))"),
+            (ScalarValue::Float32(Some(100.0)), "CAST(100 AS FLOAT)"),
+            (ScalarValue::Float64(Some(100.0)), "CAST(100 AS DOUBLE)"),
         ] {
             let (sql, _) = WrappedSelectNode::generate_sql_for_literal(
                 SqlQuery::new(String::new(), vec![]),

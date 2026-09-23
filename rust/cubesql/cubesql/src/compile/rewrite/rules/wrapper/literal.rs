@@ -11,8 +11,10 @@ use crate::compile::rewrite::{
     rules::utils::{DecomposedDayTime, DecomposedMonthDayNano},
     wrapper_replacer_context,
 };
-use datafusion::scalar::ScalarValue;
+use crate::transport::{DataSource, MetaContext};
+use datafusion::{arrow::datatypes::DataType, scalar::ScalarValue};
 use egg::Subst;
+use std::ops::ControlFlow;
 
 impl WrapperRules {
     pub fn literal_rules(&self, rules: &mut Vec<CubeRewrite>) {
@@ -76,6 +78,43 @@ impl WrapperRules {
         ]);
     }
 
+    pub(super) fn can_push_down_float_literal(
+        literal: &ScalarValue,
+        data_source: &DataSource,
+        meta: &MetaContext,
+    ) -> bool {
+        // NaN and infinity need dialect-specific syntax; neither a bare
+        // identifier in a cast nor an exponent literal can represent them.
+        let data_type = match literal {
+            ScalarValue::Float32(value) if value.is_none_or(|value| value.is_finite()) => {
+                DataType::Float32
+            }
+            ScalarValue::Float64(value) if value.is_none_or(|value| value.is_finite()) => {
+                DataType::Float64
+            }
+            ScalarValue::Float32(_) | ScalarValue::Float64(_) => return false,
+            _ => return true,
+        };
+        let supports_templates = |templates: &crate::transport::SqlTemplates| {
+            templates.contains_template("expressions/float_literal")
+                || (templates.contains_sql_type(&data_type)
+                    && templates.contains_template("expressions/cast"))
+        };
+        match Self::template_sql_generator(data_source, meta) {
+            ControlFlow::Continue(generator) => supports_templates(&generator.get_sql_templates()),
+            // An unrestricted subquery can later use any source's generator.
+            // Approve only when every possible generator can render the literal.
+            ControlFlow::Break(true) => {
+                !meta.data_source_to_sql_generator.is_empty()
+                    && meta
+                        .data_source_to_sql_generator
+                        .values()
+                        .all(|generator| supports_templates(&generator.get_sql_templates()))
+            }
+            ControlFlow::Break(false) => false,
+        }
+    }
+
     fn transform_literal(
         &self,
         input_data_source_var: &str,
@@ -90,23 +129,10 @@ impl WrapperRules {
                 return false;
             };
 
-            let supports_float_literal = |type_template| {
-                Self::can_rewrite_template(&data_source, &meta, "expressions/float_literal")
-                    || (Self::can_rewrite_template(&data_source, &meta, type_template)
-                        && Self::can_rewrite_template(&data_source, &meta, "expressions/cast"))
-            };
-
             for literal in var_iter!(egraph[subst[value_var]], LiteralExprValue) {
                 match literal {
-                    // NaN and infinity need dialect-specific syntax; neither a bare
-                    // identifier in a cast nor an exponent literal can represent them.
-                    ScalarValue::Float32(value) => {
-                        return value.is_none_or(|value| value.is_finite())
-                            && supports_float_literal("types/float");
-                    }
-                    ScalarValue::Float64(value) => {
-                        return value.is_none_or(|value| value.is_finite())
-                            && supports_float_literal("types/double");
+                    ScalarValue::Float32(_) | ScalarValue::Float64(_) => {
+                        return Self::can_push_down_float_literal(literal, &data_source, &meta);
                     }
                     ScalarValue::TimestampNanosecond(_, _)
                     | ScalarValue::TimestampMillisecond(_, _)
@@ -203,7 +229,7 @@ mod tests {
     use super::*;
     use crate::compile::{
         rewrite::{analysis::LogicalPlanAnalysis, WrapperReplacerContextInputDataSource},
-        test::{get_test_session, get_test_tenant_ctx_customized},
+        test::{get_test_session, get_test_tenant_ctx_with_multi_data_source_view_and_templates},
         CubeContext, DatabaseProtocol,
     };
     use crate::config::ConfigObjImpl;
@@ -231,7 +257,9 @@ mod tests {
                         "{{ value }}".to_string(),
                     ));
                 }
-                let meta = get_test_tenant_ctx_customized(templates);
+                let meta = get_test_tenant_ctx_with_multi_data_source_view_and_templates(vec![(
+                    "other", templates,
+                )]);
                 let session = get_test_session(DatabaseProtocol::PostgreSQL, meta.clone()).await;
                 let context = Arc::new(CubeContext::new(
                     Arc::new(SessionContext::new().state.read().clone()),
@@ -244,12 +272,6 @@ mod tests {
                     Arc::new(DefaultPhysicalPlanner::default()),
                 ));
                 let mut subst = Subst::default();
-                subst.insert(
-                    var!("?source"),
-                    graph.add(LogicalPlanLanguage::WrapperReplacerContextInputDataSource(
-                        WrapperReplacerContextInputDataSource(Some("default".to_string())),
-                    )),
-                );
                 let rules = WrapperRules::new(meta, Arc::new(ConfigObjImpl::default()));
                 for (literal, type_template, finite) in [
                     (ScalarValue::Float32(Some(100.0)), "types/float", true),
@@ -285,18 +307,28 @@ mod tests {
                             literal.clone(),
                         ))),
                     );
-                    let expected = finite
-                        && (has_override
-                            || (missing != Some(type_template)
-                                && missing != Some("expressions/cast")));
-                    assert_eq!(
-                        rules.transform_literal("?source", "?value")(&mut graph, &mut subst),
-                        expected,
-                        "{:?}, missing {:?}, override={}",
-                        literal,
-                        missing,
-                        has_override
-                    );
+                    for source in [Some("default"), Some("other"), None] {
+                        let expected = finite
+                            && (source == Some("default")
+                                || has_override
+                                || (missing != Some(type_template)
+                                    && missing != Some("expressions/cast")));
+                        subst.insert(
+                            var!("?source"),
+                            graph.add(LogicalPlanLanguage::WrapperReplacerContextInputDataSource(
+                                WrapperReplacerContextInputDataSource(source.map(str::to_string)),
+                            )),
+                        );
+                        assert_eq!(
+                            rules.transform_literal("?source", "?value")(&mut graph, &mut subst),
+                            expected,
+                            "{:?}, missing {:?}, override={}, source={:?}",
+                            literal,
+                            missing,
+                            has_override,
+                            source
+                        );
+                    }
                 }
             }
         }
