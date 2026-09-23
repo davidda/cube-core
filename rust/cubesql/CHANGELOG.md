@@ -3,6 +3,49 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.7.43](https://github.com/cube-js/cube/compare/v1.7.42...v1.7.43) (2026-09-21)
+
+### Features
+
+- **cubesql:** Upgrade lru from 0.13.0 to 0.18.4 ([#11950](https://github.com/cube-js/cube/issues/11950)) ([82f4a70](https://github.com/cube-js/cube/commit/82f4a7056351ea83e4da6d22b6c0a80673b7b0ce))
+
+## [1.7.42](https://github.com/cube-js/cube/compare/v1.7.41...v1.7.42) (2026-09-18)
+
+**Note:** Version bump only for package @cubejs-backend/cubesql
+
+## [1.7.41](https://github.com/cube-js/cube/compare/v1.7.40...v1.7.41) (2026-09-18)
+
+**Note:** Version bump only for package @cubejs-backend/cubesql
+
+## [1.7.40](https://github.com/cube-js/cube/compare/v1.7.39...v1.7.40) (2026-09-16)
+
+**Note:** Version bump only for package @cubejs-backend/cubesql
+
+## [1.7.39](https://github.com/cube-js/cube/compare/v1.7.38...v1.7.39) (2026-09-15)
+
+### Bug Fixes
+
+- **cubesql:** Cast `DATE +/- INTERVAL` explicitly in temporal comparisons ([#11831](https://github.com/cube-js/cube/issues/11831)) ([a819884](https://github.com/cube-js/cube/commit/a8198843aecb494b85ad8610712525773cf2d93b))
+
+### Features
+
+- **server-core:** Redact query values in log events ([#11854](https://github.com/cube-js/cube/issues/11854)) ([99cceac](https://github.com/cube-js/cube/commit/99cceac77f00c8c0a13c0f2c0f4b237b4d97460f))
+- Upgrade rust 1.90.0 -> 1.98.1 (stable) ([#11879](https://github.com/cube-js/cube/issues/11879)) ([da47602](https://github.com/cube-js/cube/commit/da4760206dbc86d2e987f184fc14b7fc4f5b884e))
+
+## [1.7.38](https://github.com/cube-js/cube/compare/v1.7.37...v1.7.38) (2026-09-14)
+
+### Bug Fixes
+
+- **cubesql:** preserve literal ORDER BY aliases ([#11496](https://github.com/cube-js/cube/issues/11496)) ([5019312](https://github.com/cube-js/cube/commit/5019312c6559fecae7bafa51002126d6bdcef5f5))
+- **schema-compiler:** name the ClickHouse types a cast can produce ([#11807](https://github.com/cube-js/cube/issues/11807)) ([c7dcc5c](https://github.com/cube-js/cube/commit/c7dcc5cfaa5094c5d7183e061b95f1051d442f1f))
+
+## [1.7.37](https://github.com/cube-js/cube/compare/v1.7.35...v1.7.37) (2026-09-10)
+
+### Bug Fixes
+
+- **cubesql:** Allow SQL pushdown for views spanning several data sources ([#11802](https://github.com/cube-js/cube/issues/11802)) ([185c1a9](https://github.com/cube-js/cube/commit/185c1a9b6139f3290faf042b2bc8f85d492282f6))
+- **cubesql:** Build a pushed down union over its queries' classes, not their forms ([#11801](https://github.com/cube-js/cube/issues/11801)) ([7b24714](https://github.com/cube-js/cube/commit/7b24714522d0bb22cb239512fbf3866cddce38ef))
+
 ## [1.7.36](https://github.com/cube-js/cube/compare/v1.7.35...v1.7.36) (2026-09-09)
 
 ### Bug Fixes

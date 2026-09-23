@@ -151,7 +151,7 @@ export type DBResponsePrimitive =
 // TODO type this better, to make it proper disjoint union
 export type Sql4SqlOk = {
   sql: string,
-    values: Array<string | null>,
+  values: Array<string | null>,
 };
 export type Sql4SqlError = { error: string };
 export type Sql4SqlCommon = {
@@ -217,6 +217,7 @@ function wrapNativeFunctionWithChannelCallback(
           e,
         });
       }
+
       try {
         channel.reject(e.message || 'Unknown JS exception');
       } catch (rejectErr: unknown) {
@@ -251,6 +252,7 @@ function wrapRawNativeFunctionWithChannelCallback(
           e,
         });
       }
+
       try {
         channel.reject(e.message || e.toString());
       } catch (error) {
@@ -281,6 +283,7 @@ function wrapNativeFunctionWithStream(
   );
   return async (extra: any, writerOrChannel: any) => {
     let response: any;
+
     try {
       response = await fn(JSON.parse(extra));
       if (response && response.stream) {
@@ -375,6 +378,12 @@ export const resetLogger = (logLevel: LogLevel): void => {
 export const isFallbackBuild = (): boolean => {
   const native = loadNative();
   return native.isFallbackBuild();
+};
+
+/** The statement with its string literals replaced by 'redacted', as cubesql logs it. */
+export const redactSqlLiterals = (sql: string): string => {
+  const native = loadNative();
+  return native.redactSqlLiterals(sql);
 };
 
 export type SqlInterfaceInstance = { __typename: 'sqlinterfaceinstance' };
@@ -530,7 +539,7 @@ export const transpileYaml = async (transpileRequests: TransformConfig[]): Promi
 export interface PyConfiguration {
   repositoryFactory?: (ctx: unknown) => Promise<unknown>,
   logger?: (msg: string, params: Record<string, any>) => void,
-  checkAuth?: (req: unknown, authorization: string) => Promise<{ 'security_context'?: unknown }>
+  checkAuth?: (req: unknown, authorization: string) => Promise<{ security_context?: unknown }>
   extendContext?: (req: unknown) => Promise<unknown>
   queryRewrite?: (query: unknown, ctx: unknown) => Promise<unknown>
   contextToApiScopes?: () => Promise<string[]>

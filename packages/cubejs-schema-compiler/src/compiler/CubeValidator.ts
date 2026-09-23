@@ -106,7 +106,7 @@ const everyCronTimeZone = Joi.string().custom((value, helper) => {
     cronParser.parseExpression('0 * * * *', { currentDate: '2020-01-01 00:00:01', tz: value });
     return value;
   } catch (e) {
-    return helper.message({ custom: `(${formatStatePath(helper.state)} = ${value}) unknown timezone. Take a look here https://cube.dev/docs/schema/reference/cube#supported-timezones to get available time zones` });
+    return helper.message({ custom: `(${formatStatePath(helper.state)} = ${value}) unknown timezone. Take a look here https://docs.cube.dev/admin/time-zones#valid-time-zone-values to get available time zones` });
   }
 });
 
@@ -331,6 +331,7 @@ const LinkItemSchema = Joi.object().keys({
 const LinksSchema = Joi.array().items(LinkItemSchema).custom((value, helpers) => {
   const names = value.map((link: any) => (typeof link.name === 'function' ? link.name() : link.name));
   const seen = new Set<string>();
+
   for (const name of names) {
     if (seen.has(name)) {
       return helpers.error('any.custom', { message: `Duplicate link name '${name}'` });

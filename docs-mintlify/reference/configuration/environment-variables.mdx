@@ -24,6 +24,33 @@ The secret key used to sign and verify JWTs. Generated on project scaffold with
 See also the [`check_auth` configuration
 option](/reference/configuration/config#check_auth).
 
+## `CUBEJS_API_SECRETS`
+
+A comma-separated list of secret keys accepted when verifying JWTs. Use it to
+rotate [`CUBEJS_API_SECRET`](#cubejs_api_secret) without a window in which valid
+tokens are rejected: list the outgoing and incoming secrets together until every
+client has re-signed, then drop the outgoing one.
+
+| Possible Values                   | Default in Development | Default in Production |
+| --------------------------------- | ---------------------- | --------------------- |
+| A comma-separated list of strings | N/A                    | N/A                   |
+
+```dotenv
+CUBEJS_API_SECRETS=outgoing-secret,incoming-secret
+```
+
+A token is accepted if any secret in the list verifies its signature. Whitespace
+around entries is trimmed, empty entries are dropped, and duplicates are removed.
+
+When set to a non-empty value, this variable takes precedence over
+`CUBEJS_API_SECRET` and only the listed secrets are accepted. Set it to an empty
+value to fall back to `CUBEJS_API_SECRET`.
+
+This variable affects verification only; tokens are still signed with whichever
+single secret the issuer holds. It has no effect when
+[`CUBEJS_JWK_URL`](#cubejs_jwk_url) is set, because signing keys are then
+resolved from the JWKS endpoint by key ID.
+
 ## `CUBEJS_APP`
 
 An application ID used to uniquely identify the Cube deployment. Can be
@@ -1215,6 +1242,24 @@ respected.
 | --------------- | ---------------------- | --------------------- |
 | `true`, `false` | `true`                 | `true`                |
 
+<Warning>
+
+Keep this option enabled. With `false`, only *older versions* of each table are
+dropped, so partitions the current data model no longer builds — rotated out of
+the [build
+range](/reference/data-modeling/pre-aggregations#build_range_start-and-build_range_end),
+or left behind after a rollup is renamed or removed, or after its partition
+granularity is changed — are never dropped. They accumulate in Cube Store and
+inflate its metastore, which slows metastore operations, degrades every query
+served from a pre-aggregation, and can eventually bring down the cluster.
+
+If partitions that are still in use are being dropped, raise
+[`CUBEJS_TOUCH_PRE_AGG_TIMEOUT`](/reference/configuration/environment-variables#cubejs_touch_pre_agg_timeout)
+and/or add Refresh Worker capacity so every partition is touched within the
+timeout, rather than disabling this option.
+
+</Warning>
+
 ## `CUBEJS_FIREBOLT_ACCOUNT`
 
 The [Firebolt account name][firebolt-docs-account-name].
@@ -1347,6 +1392,31 @@ emitted as human-readable text.
 
 See also `CUBESTORE_LOG_LEVEL`.
 See also the [`logger` configuration option](/reference/configuration/config#logger).
+
+## `CUBEJS_LOG_REDACTION`
+
+If `true`, filter values, SQL parameters, and string literals in [SQL API][ref-sql-api]
+statements are replaced with `redacted` before a log event is written, so personal data
+passed in queries does not end up in log storage. Only logs are affected: events sent to
+`CUBEJS_AGENT_ENDPOINT_URL`, which is how Cube Cloud receives them for Query History, keep
+the original values. Member names, numeric
+literals, date ranges, and the query shape are kept, as is the security context. Error
+messages from a data source are logged as returned; a SQL API error that quotes the
+statement has it redacted.
+
+A redacted SQL API statement is re-printed from its parse tree, so comments and the
+original spacing are not kept. Every string argument is redacted, a granularity such as
+`'month'` or an `INTERVAL '1 day'` included. A statement that cannot be parsed is logged
+as it was received. A statement Cube could not redact at all, such as a malformed request
+body or a SQL API error raised before the statement was read, is logged as `redacted`.
+
+It is off by default in development mode, that is when `NODE_ENV` is not `production` or
+[`CUBEJS_DEV_MODE`](#cubejs_dev_mode) is `true`, so runnable SQL statements can be read
+from the console.
+
+| Possible Values | Default in Development | Default in Production |
+| --------------- | ---------------------- | --------------------- |
+| `true`, `false` | `false`                | `true`                |
 
 ## `CUBEJS_MAX_PARTITIONS_PER_CUBE`
 

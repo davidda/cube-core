@@ -3,6 +3,53 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.7.43](https://github.com/cube-js/cube/compare/v1.7.42...v1.7.43) (2026-09-21)
+
+### Bug Fixes
+
+- **cubestore:** Point a shed query at multi-cluster instead of env knobs ([#11931](https://github.com/cube-js/cube/issues/11931)) ([2d9c13a](https://github.com/cube-js/cube/commit/2d9c13a44e01466ffdccfdc065e5ecddc8189930))
+- **query-orchestrator:** don't report failed pre-agg build jobs as done ([#11629](https://github.com/cube-js/cube/issues/11629)) ([42bfe75](https://github.com/cube-js/cube/commit/42bfe75a5628b9a9f882362a63771239a0c6d1a9))
+
+## [1.7.42](https://github.com/cube-js/cube/compare/v1.7.41...v1.7.42) (2026-09-18)
+
+**Note:** Version bump only for package @cubejs-backend/cubestore
+
+## [1.7.41](https://github.com/cube-js/cube/compare/v1.7.40...v1.7.41) (2026-09-18)
+
+### Features
+
+- **cubestore:** Limit how many logical plans are built at once ([#11924](https://github.com/cube-js/cube/issues/11924)) ([7338c00](https://github.com/cube-js/cube/commit/7338c00aa27af7b46b122f08a4df8d5488150a62))
+- Upgrade deps (clear 52 Dependabot alerts) ([#11853](https://github.com/cube-js/cube/issues/11853)) ([c3ba115](https://github.com/cube-js/cube/commit/c3ba11507d94389941e1f78a39286277a1e112c7))
+
+## [1.7.40](https://github.com/cube-js/cube/compare/v1.7.39...v1.7.40) (2026-09-16)
+
+### Bug Fixes
+
+- **cubestore:** Bump msql-srv to v0.9.3 to drop the failure crate ([#11898](https://github.com/cube-js/cube/issues/11898)) ([9b444bd](https://github.com/cube-js/cube/commit/9b444bd66055731c0de7ed8ccc858d59f3cb8727))
+- **cubestore:** scope the limit pushdown to the aggregate that owns it ([#11886](https://github.com/cube-js/cube/issues/11886)) ([54c795b](https://github.com/cube-js/cube/commit/54c795bf6f6de35dee1cf412653eeb7c04293aab)), closes [#11545](https://github.com/cube-js/cube/issues/11545) [#11545](https://github.com/cube-js/cube/issues/11545) [#11545](https://github.com/cube-js/cube/issues/11545) [#11833](https://github.com/cube-js/cube/issues/11833)
+- **cubestore:** stop reporting remote files nothing references ([#11601](https://github.com/cube-js/cube/issues/11601)) ([49956f1](https://github.com/cube-js/cube/commit/49956f143c362faad2cae3b7016db62be5c1d4ba))
+
+## [1.7.39](https://github.com/cube-js/cube/compare/v1.7.38...v1.7.39) (2026-09-15)
+
+**Note:** Version bump only for package @cubejs-backend/cubestore
+
+## [1.7.38](https://github.com/cube-js/cube/compare/v1.7.37...v1.7.38) (2026-09-14)
+
+### Bug Fixes
+
+- **cubestore:** Build with large pagesize support for AMR64, thanks [@vltmn](https://github.com/vltmn) ([#10152](https://github.com/cube-js/cube/issues/10152)) ([460173d](https://github.com/cube-js/cube/commit/460173dd498f3c3bc7346b102d4c15ab137d5440))
+
+## [1.7.37](https://github.com/cube-js/cube/compare/v1.7.35...v1.7.37) (2026-09-10)
+
+### Bug Fixes
+
+- **cross:** Restore host Python interpreter in aarch64 images ([#11823](https://github.com/cube-js/cube/issues/11823)) ([e9d267f](https://github.com/cube-js/cube/commit/e9d267f8f09df616a7203531081db936d706c5ff))
+- **cubestore:** Report a websocket peer that goes away as debug, not error ([#11786](https://github.com/cube-js/cube/issues/11786)) ([fe263b9](https://github.com/cube-js/cube/commit/fe263b9243c8b1e6c37cb05837dcd0e0b758a48b))
+
+### Features
+
+- Migrate to TypeScript 6.0.3 (prepare for 7) ([#11767](https://github.com/cube-js/cube/issues/11767)) ([98ac580](https://github.com/cube-js/cube/commit/98ac58039be36e7392ac617562d0dad03f17de3c))
+
 ## [1.7.36](https://github.com/cube-js/cube/compare/v1.7.35...v1.7.36) (2026-09-09)
 
 ### Features

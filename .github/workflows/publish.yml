@@ -23,7 +23,7 @@ jobs:
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: 1.90.0
+          toolchain: 1.98.1
           # override: true # this is by default on
           rustflags: ""
           components: rustfmt
@@ -110,7 +110,7 @@ jobs:
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: 1.90.0
+          toolchain: 1.98.1
           # override: true # this is by default on
           rustflags: ""
           components: rustfmt
@@ -199,7 +199,7 @@ jobs:
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: 1.90.0
+          toolchain: 1.98.1
           # override: true # this is by default on
           rustflags: ""
           components: rustfmt
@@ -274,7 +274,7 @@ jobs:
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: 1.90.0
+          toolchain: 1.98.1
           # override: true # this is by default on
           rustflags: ""
           components: rustfmt
@@ -647,6 +647,13 @@ jobs:
           key: target-${{ matrix.target }}
       - name: Build with Cargo
         run: |
+          # jemalloc bakes the page size in at build time. This runner has 4 KiB
+          # pages, but arm64 hosts can use up to 64 KiB (Raspberry Pi, Ubuntu
+          # arm64-largemem, Asahi), so build for the largest one there.
+          # TODO: drop once we are on jemalloc 5.3.1+, where this is the default.
+          case "${{ matrix.target }}" in
+            aarch64-*) export JEMALLOC_SYS_WITH_LG_PAGE=16 ;;
+          esac
           cd rust/cubestore && cargo build --release --target=${{ matrix.target }} -p cubestore
       - name: Compress binaries
         uses: svenstaro/upx-action@v3
