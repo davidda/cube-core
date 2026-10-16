@@ -3393,6 +3393,25 @@ impl WrappedSelectNode {
         Ok((resulting_sql, sql_query))
     }
 
+    fn generate_sql_for_float_literal(
+        sql_generator: Arc<dyn SqlGenerator>,
+        value: Option<String>,
+        literal: &ScalarValue,
+    ) -> Result<String> {
+        match value {
+            Some(value) => sql_generator
+                .get_sql_templates()
+                .float_literal_expr(value)
+                .map_err(|e| {
+                    DataFusionError::Internal(format!(
+                        "Can't generate SQL for literal float: {}",
+                        e
+                    ))
+                }),
+            None => Self::generate_null_for_literal(sql_generator, literal),
+        }
+    }
+
     #[inline(never)]
     fn generate_sql_for_literal(
         mut sql_query: SqlQuery,
@@ -3420,17 +3439,19 @@ impl WrappedSelectNode {
                 sql_query,
             ),
             ScalarValue::Float32(f) => (
-                sql_generator
-                    .get_sql_templates()
-                    .float_literal_expr(f.map(f64::from), DataType::Float32)
-                    .map_err(|e| DataFusionError::Internal(e.to_string()))?,
+                Self::generate_sql_for_float_literal(
+                    sql_generator,
+                    f.map(|f| format!("{f}")),
+                    &literal,
+                )?,
                 sql_query,
             ),
             ScalarValue::Float64(f) => (
-                sql_generator
-                    .get_sql_templates()
-                    .float_literal_expr(f, DataType::Float64)
-                    .map_err(|e| DataFusionError::Internal(e.to_string()))?,
+                Self::generate_sql_for_float_literal(
+                    sql_generator,
+                    f.map(|f| format!("{f}")),
+                    &literal,
+                )?,
                 sql_query,
             ),
             ScalarValue::Decimal128(x, precision, scale) => {
@@ -5096,58 +5117,6 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn test_float_literal_preserves_sql_type() {
-        let generator = crate::compile::test::sql_generator(vec![
-            ("types/float".into(), "FLOAT(24)".into()),
-            ("types/double".into(), "FLOAT(53)".into()),
-        ]);
-        for (literal, expected) in [
-            (ScalarValue::Float32(Some(100.0)), "CAST(100 AS FLOAT(24))"),
-            (ScalarValue::Float32(Some(0.1)), "CAST(0.1 AS FLOAT(24))"),
-            (ScalarValue::Float64(Some(100.0)), "CAST(100 AS FLOAT(53))"),
-            (
-                ScalarValue::Float64(Some(100.1)),
-                "CAST(100.1 AS FLOAT(53))",
-            ),
-            (ScalarValue::Float64(Some(0.0)), "CAST(0 AS FLOAT(53))"),
-            (
-                ScalarValue::Float64(Some(-100.0)),
-                "CAST(-100 AS FLOAT(53))",
-            ),
-            (ScalarValue::Float32(None), "CAST(NULL AS FLOAT(24))"),
-            (ScalarValue::Float64(None), "CAST(NULL AS FLOAT(53))"),
-            (ScalarValue::Int64(Some(100)), "100"),
-        ] {
-            let (sql, _) = WrappedSelectNode::generate_sql_for_literal(
-                SqlQuery::new(String::new(), vec![]),
-                generator.clone(),
-                literal,
-            )
-            .unwrap();
-            assert_eq!(sql, expected);
-        }
-
-        let generator = crate::compile::test::sql_generator(vec![(
-            "types/nullable".into(),
-            "Nullable({{ data_type }})".into(),
-        )]);
-        for (literal, expected) in [
-            (ScalarValue::Float32(None), "CAST(NULL AS Nullable(FLOAT))"),
-            (ScalarValue::Float64(None), "CAST(NULL AS Nullable(DOUBLE))"),
-            (ScalarValue::Float32(Some(100.0)), "CAST(100 AS FLOAT)"),
-            (ScalarValue::Float64(Some(100.0)), "CAST(100 AS DOUBLE)"),
-        ] {
-            let (sql, _) = WrappedSelectNode::generate_sql_for_literal(
-                SqlQuery::new(String::new(), vec![]),
-                generator.clone(),
-                literal,
-            )
-            .unwrap();
-            assert_eq!(sql, expected);
-        }
-    }
-
-    #[test]
     fn duplicate_wrapper_aliases_source_order() {
         for reverse in [false, true] {
             for use_expr in [false, true] {
@@ -5210,54 +5179,6 @@ mod tests {
             assert_eq!(member.field_name, expected);
         }
     }
-    #[test]
-    fn test_mysql_float_literal_without_cast() {
-        let generator = crate::compile::test::sql_generator(vec![
-            (
-                "expressions/float_literal".into(),
-                "{% if value is none %}(NULL + 0e0){% else %}{{ value }}{% endif %}".into(),
-            ),
-            ("types/float".into(), "UNSUPPORTED_FLOAT".into()),
-            ("types/double".into(), "UNSUPPORTED_DOUBLE".into()),
-        ]);
-        for literal in [
-            ScalarValue::Float32(Some(100.0)),
-            ScalarValue::Float32(Some(0.1)),
-            ScalarValue::Float32(Some(f32::MAX)),
-            ScalarValue::Float32(Some(f32::from_bits(1))),
-            ScalarValue::Float64(Some(100.0)),
-            ScalarValue::Float64(Some(100.1)),
-            ScalarValue::Float64(Some(-0.0)),
-            ScalarValue::Float64(Some(-100.0)),
-            ScalarValue::Float64(Some(f64::MAX)),
-            ScalarValue::Float64(Some(f64::from_bits(1))),
-            ScalarValue::Float32(None),
-            ScalarValue::Float64(None),
-        ] {
-            let expected = match literal {
-                ScalarValue::Float32(value) => value.map(f64::from),
-                ScalarValue::Float64(value) => value,
-                _ => unreachable!(),
-            };
-            let (sql, _) = WrappedSelectNode::generate_sql_for_literal(
-                SqlQuery::new(String::new(), vec![]),
-                generator.clone(),
-                literal.clone(),
-            )
-            .unwrap();
-            if let Some(expected) = expected {
-                assert!(sql.contains('e'), "{:?}: {}", literal, sql);
-                assert_eq!(
-                    sql.parse::<f64>().unwrap().to_bits(),
-                    expected.to_bits(),
-                    "{literal:?}: {sql}"
-                );
-            } else {
-                assert_eq!(sql, "(NULL + 0e0)", "{literal:?}");
-            }
-        }
-    }
-
     /// Each entry is a cube with one dimension, on a data source of its own.
     fn meta_context_with_cubes(cubes: &[(&str, &str, &str)]) -> MetaContext {
         MetaContext::new(

@@ -298,6 +298,10 @@ export class MssqlQuery extends BaseQuery {
 
   public sqlTemplates() {
     const templates = super.sqlTemplates();
+    // INT tokens truncate float division. DECIMAL keeps fractional arithmetic and
+    // INT's ten whole digits, avoiding ROUND overflow from minimally sized decimals.
+    // Larger literals already infer NUMERIC; keep their precision and scale unchanged.
+    templates.expressions.float_literal = '{% if is_int32 %}CAST({{ value }} AS DECIMAL(10, 0)){% else %}{{ value }}{% endif %}';
     // SQL Server 2014 supports space trimming through one-argument LTRIM/RTRIM.
     // Explicit character sets require newer versions and must not be pushed down.
     delete templates.functions.BTRIM;
